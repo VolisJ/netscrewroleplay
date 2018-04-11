@@ -52,3 +52,4 @@ GitHub.sublime-settings
 # End of https://www.gitignore.io/api/pawn,sublimetext
 *.exe
 server-readme.txt
+server_log.txt
