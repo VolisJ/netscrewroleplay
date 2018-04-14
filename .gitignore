@@ -53,3 +53,5 @@ GitHub.sublime-settings
 *.exe
 server-readme.txt
 server_log.txt
+*.log
+crashinfo.txt
