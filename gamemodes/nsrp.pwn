@@ -16,14 +16,14 @@
 	Redistribution and use in any form, with or without modification, are not permitted in any case.
 */
 
-/*----INCLUDES----*/
+// -----------------------------------------Includes-----------------------------------------
 #include <a_samp>
 #include <YSI\Y_ini>
 #include <sscanf2>
 #include "colors.pwn"
 #include <zcmd>
 
-/*----DEFINES----*/
+// ------------------------------------------Defines-----------------------------------------
 #define GameMode "NSRP v1.0"
 
 #define ACCOUNT_PATH "accounts/"
@@ -36,11 +36,10 @@
 #define Spawn_Z 13.5469
 
 /*----GLOBAL VARIABLE DECLARATIONS----*/
-new pAccountStatus[MAX_PLAYERS];
 new accountstimer[MAX_PLAYERS];
 new mutetimer[MAX_PLAYERS];
 
-/*----ENUMS----*/
+// -------------------------------------------Enums-------------------------------------------
 enum PlayerData
 {
 	pEmail[128],
@@ -53,7 +52,9 @@ enum PlayerData
 	pHelperLevel,
 	pIsBanned,
 	pIsMuted,
-	pMuteTime
+	pMuteTime,
+	pWarns,
+	pRegCheck
 }
 new Player[MAX_PLAYERS][PlayerData];
 
@@ -67,7 +68,7 @@ enum dialogs
 
 native WP_Hash(buffer[], len, const str[]);
 
-/*----FORWARDS----*/
+// ------------------------------------------Forwards-----------------------------------------
 forward LoadAccounts(playerid);
 forward CheckAccountExist(playerid);
 forward OnAccountRegister(playerid);
@@ -78,14 +79,19 @@ forward SafeSetPlayerMoney(playerid, money);
 forward SafeResetPlayerMoney(playerid);
 forward SafeGetPlayerMoney(playerid);
 forward DecMuteTime(playerid);
+forward DelayedKick(playerid);
+forward DelayedBan(playerid);
 forward RegisterLog(registerstring[]);
 forward AdminLog(playerid, adminstring[]);
 forward MuteLog(playerid, mutestring[]);
 forward AdminCommandLog(playerid, acmdlogstring[]);
+forward KickLog(playerid, kickstring[]);
+forward WarnLog(playerid, warnstring[]);
+forward BanLog(playerid, banstring[]);
 
 main() {}
 
-/*----Built - In Functions----*/
+// ------------------------------------Built - In Functions------------------------------------
 public OnGameModeInit()
 {
 	SetGameModeText(GameMode);
@@ -100,6 +106,7 @@ public OnGameModeInit()
 
 public OnPlayerConnect(playerid)
 {
+	TogglePlayerSpectating(playerid, 1);
 	CheckAccountExist(playerid);
 	SafeResetPlayerMoney(playerid);
 
@@ -217,7 +224,7 @@ public OnPlayerText(playerid, text[])
 	return 0;
 }
 
-/*----USER DEFINED FUNCTIONS----*/
+// -----------------------------------User Defined Functions-------------------------------------
 stock GetName(playerid) // Returns the name of a player according to the player id
 {
 	new name[MAX_PLAYER_NAME];
@@ -228,49 +235,58 @@ stock GetName(playerid) // Returns the name of a player according to the player 
 
 public CheckAccountExist(playerid) // Checks if a player is already registered or not and shows the login/register dialog accordingly
 {
-	new name[128], string[MAX_PLAYER_NAME];
+	new name[128], string[MAX_PLAYER_NAME], kickstring[128], day, month, year, hour, minute, second;
 
 	name = GetName(playerid);
 	format(string, sizeof(string), "accounts/%s.ini", name);
 
 	if(fexist(string))
-	{
-		pAccountStatus[playerid] = 1;
-
-		if(Player[playerid][pIsBanned] == 0)
-		{
-			new filename[64], line[256], s, key[64];
-			new File:handle;
+	{		
+		new filename[64], line[256], s, key[64];
+		new File:handle;
 			
-			format(filename, sizeof(filename), ACCOUNT_PATH "%s.ini", name);
+		format(filename, sizeof(filename), ACCOUNT_PATH "%s.ini", name);
 
-			handle = fopen(filename, io_read);
-			while(fread(handle, line))
-			{
-				StripNL(line);
-				s = strfind(line, "=");
-
-				if(!line[0] || s < 1)
-					continue;
-
-				strmid(key, line, 0, s++);
-				if(strcmp(key, "Password") == 0)
-					sscanf(line[s], "s[129]", Player[playerid][pPassword]);
-			}
-			fclose(handle);
-
-			ShowPlayerDialog(playerid, DIALOG_LOGIN, DIALOG_STYLE_PASSWORD, ""COL_WHITE"Account Login", ""COL_WHITE"Please enter your password below to login.", "Login", "Quit");
-		}
-		else
+		handle = fopen(filename, io_read);
+		while(fread(handle, line))
 		{
-			SendClientMessage(playerid, COLOR_LIGHTRED, "You are banned from this server");
+			StripNL(line);
+			s = strfind(line, "=");
+
+			if(!line[0] || s < 1)
+				continue;
+
+			strmid(key, line, 0, s++);
+			if(strcmp(key, "Password") == 0)
+				sscanf(line[s], "s[129]", Player[playerid][pPassword]);
+			else if(strcmp(key, "RegCheck") == 0)
+				Player[playerid][pRegCheck] = strval(line[s]);
+			else if(strcmp(key, "IsBanned") == 0)
+				Player[playerid][pIsBanned] = strval(line[s]);
 		}
+		fclose(handle);
+
+		if(Player[playerid][pIsBanned] == 1)
+		{
+			SendClientMessage(playerid, COLOR_BRIGHTRED, "You are banned from this server!");
+
+			gettime(hour, minute, second);
+			getdate(year, month, day);
+
+			SetTimerEx("DelayedKick", 1000, 0, "i", playerid); // calls the function DelayedKick to kick player with a delay of 1 second to show the message
+
+			format(kickstring, sizeof(kickstring), "Reason: Login failed due to ban [%d/%d/%d] [%d:%d:%d]", day, month, year, hour, minute, second);
+			KickLog(playerid, kickstring);
+		}
+
+		if(Player[playerid][pRegCheck] == 1)
+			ShowPlayerDialog(playerid, DIALOG_LOGIN, DIALOG_STYLE_PASSWORD, ""COL_WHITE"Account Login", ""COL_WHITE"Please enter your password below to login.", "Login", "Quit");
+		else
+			ShowPlayerDialog(playerid, DIALOG_REGISTER_1, DIALOG_STYLE_INPUT, ""COL_WHITE"Account Registration", ""COL_WHITE"Please enter your email below to register your account.", "Next", "Cancel");
 	}
 	else
-	{
-		pAccountStatus[playerid] = 0;
 		ShowPlayerDialog(playerid, DIALOG_REGISTER_1, DIALOG_STYLE_INPUT, ""COL_WHITE"Account Registration", ""COL_WHITE"Please enter your email below to register your account.", "Next", "Cancel");
-	}
+
 
 	return 1;
 }
@@ -287,7 +303,8 @@ public OnAccountRegister(playerid) // Assigns the information to the player vari
 	Player[playerid][pIsBanned] = 0;
 	Player[playerid][pIsMuted] = 0;
 	Player[playerid][pMuteTime] = 0;
-	pAccountStatus[playerid] = 1;
+	Player[playerid][pWarns] = 0;
+	Player[playerid][pRegCheck] = 1;
 
 	new hour, minute, second;
 	new year, month, day;
@@ -297,6 +314,8 @@ public OnAccountRegister(playerid) // Assigns the information to the player vari
 
 	format(registerstring, sizeof(registerstring), "%s has registered. [%d/%d/%d] [%d:%d:%d]", GetName(playerid), day, month, year, hour, minute, second);
 	RegisterLog(registerstring);
+
+	TogglePlayerSpectating(playerid, 0);
 
 	SetSpawnInfo(playerid, 0, Player[playerid][pSkin], Spawn_X, Spawn_Y, Spawn_Z, 180, -1, -1, -1, -1, -1, -1);
 	SpawnPlayer(playerid);
@@ -347,6 +366,12 @@ public SaveAccount(playerid) // Saves the information to the .ini file
 	format(line, sizeof(line), "MuteTime=%d\r\n", Player[playerid][pMuteTime]);
 	fwrite(handle, line);
 
+	format(line, sizeof(line), "Warns=%d\r\n", Player[playerid][pWarns]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "RegCheck=%d\r\n", Player[playerid][pRegCheck]);
+	fwrite(handle, line);
+
 	fclose(handle);
 	return 1;
 }
@@ -393,11 +418,16 @@ public OnAccountLoad(playerid) // Loads player data from the .ini file to the pl
 			Player[playerid][pIsMuted] = strval(line[s]);
 		else if(strcmp(key, "MuteTime") == 0)
 			Player[playerid][pMuteTime] = strval(line[s]);
+		else if(strcmp(key, "Warns") == 0)
+			Player[playerid][pWarns] = strval(line[s]);
+		else if(strcmp(key, "RegCheck") == 0)
+			Player[playerid][pRegCheck] = strval(line[s]);
 	}
-
 	fclose(handle);
 
 	SafeSetPlayerMoney(playerid, Player[playerid][pCash]);
+
+	TogglePlayerSpectating(playerid, 0);
 
 	SetSpawnInfo(playerid, 0, Player[playerid][pSkin], Spawn_X, Spawn_Y, Spawn_Z, 180, -1, -1, -1, -1, -1, -1);
 	SpawnPlayer(playerid);
@@ -435,7 +465,20 @@ public DecMuteTime(playerid) // Decreases mute time of player by 1 second
 	return 1;
 }
 
-/*----Safe Money Functions (Anti - Money Cheat)----*/
+public DelayedKick(playerid) // Kicks a player from the server
+{
+	Kick(playerid);
+	return 1;
+}
+
+public DelayedBan(playerid) // Bans a player from the server
+{
+	Player[playerid][pIsBanned] = 1;
+	Ban(playerid);
+	return 1;
+}
+
+// ------------------------Safe Money Functions (Anti - Money Cheat)------------------------------
 public SafeGivePlayerMoney(playerid, money) // Returns the server - side cash of the player
 {
 	Player[playerid][pCash] += money;
@@ -465,7 +508,7 @@ public SafeGetPlayerMoney(playerid) // Returns the server - side cash of the pla
 	return Player[playerid][pCash];
 }
 
-/*----Log Functions----*/
+// -------------------------------------Log Functions---------------------------------------------
 public RegisterLog(registerstring[]) // Makes log of player registrations
 {
 	new entry[256];
@@ -517,7 +560,46 @@ public AdminCommandLog(playerid, acmdlogstring[]) // Makes log of admin's every 
 	fclose(hFile);
 }
 
-/*----Admin Commands----*/
+public KickLog(playerid, kickstring[]) // Makes log of admin's every command
+{
+	new entry[256], string[128];
+	format(entry, sizeof(entry), "%s\r\n", kickstring);
+
+	new File:hFile;
+	format(string, sizeof(string), "logs/kicks/%s.log", GetName(playerid));
+	hFile = fopen(string, io_append);
+	fwrite(hFile, entry);
+
+	fclose(hFile);
+}
+
+public WarnLog(playerid, warnstring[]) // Makes log of admin's every command
+{
+	new entry[256], string[128];
+	format(entry, sizeof(entry), "%s\r\n", warnstring);
+
+	new File:hFile;
+	format(string, sizeof(string), "logs/warns/%s.log", GetName(playerid));
+	hFile = fopen(string, io_append);
+	fwrite(hFile, entry);
+
+	fclose(hFile);
+}
+
+public BanLog(playerid, banstring[]) // Makes log of admin's every command
+{
+	new entry[256], string[128];
+	format(entry, sizeof(entry), "%s\r\n", banstring);
+
+	new File:hFile;
+	format(string, sizeof(string), "logs/bans/%s.log", GetName(playerid));
+	hFile = fopen(string, io_append);
+	fwrite(hFile, entry);
+
+	fclose(hFile);
+}
+
+// ---------------------------------------Admin Commands------------------------------------------
 CMD:ma(playerid, params[])
 	return cmd_makeadmin(playerid, params);
 
@@ -544,10 +626,10 @@ CMD:makeadmin(playerid, params[]) // Makes a player admin (Can only be used by a
 			getdate(year, month, day);
 
 			format(acmdlogstring, sizeof(acmdlogstring), "Command: /makeadmin %s %d [%d/%d/%d] [%d:%d:%d]", GetName(targetid), level, day, month, year, hour, minute, second);
-			AdminCommandLog(targetid, acmdlogstring);
+			AdminCommandLog(playerid, acmdlogstring);
 
 			format(adminstring, sizeof(adminstring), "Made | Level: %d | By: %s [%d/%d/%d] [%d:%d:%d]", level, GetName(playerid), day, month, year, hour, minute, second);
-			AdminLog(playerid, adminstring);
+			AdminLog(targetid, adminstring);
 
 			format(string, sizeof(string), "You have made %s an admin level %d.", GetName(targetid), level);
 			SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
@@ -586,10 +668,10 @@ CMD:removeadmin(playerid, params[]) // Removes an admin (Can only be used by adm
 			getdate(year, month, day);
 
 			format(acmdlogstring, sizeof(acmdlogstring), "Command: /removeadmin %s [%d/%d/%d] [%d:%d:%d]", GetName(targetid), day, month, year, hour, minute, second);
-			AdminCommandLog(targetid, acmdlogstring);
+			AdminCommandLog(playerid, acmdlogstring);
 
 			format(adminstring, sizeof(adminstring), "%s: Removed | By: %s [%d/%d/%d] [%d:%d:%d]", GetName(targetid), GetName(playerid), day, month, year, hour, minute, second);
-			AdminLog(playerid, adminstring);
+			AdminLog(targetid, adminstring);
 
 			format(string, sizeof(string), "You have revoked %s's admin status.", GetName(targetid));
 			SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
@@ -625,12 +707,12 @@ CMD:asetlevel(playerid, params[]) // Promote or Demote an admin (Can only be use
 			getdate(year, month, day);
 
 			format(acmdlogstring, sizeof(acmdlogstring), "Command: /asetlevel %s %d [%d/%d/%d] [%d:%d:%d]", GetName(targetid), level, day, month, year, hour, minute, second);
-			AdminCommandLog(targetid, acmdlogstring);
+			AdminCommandLog(playerid, acmdlogstring);
 
 			if(Player[targetid][pAdminLevel] < level)
 			{
 				format(adminstring, sizeof(adminstring), "%s: Promoted | Level: %d | By: %s. [%d/%d/%d] [%d:%d:%d]", GetName(targetid), level, GetName(playerid), day, month, year, hour, minute, second);
-				AdminLog(playerid, adminstring);
+				AdminLog(targetid, adminstring);
 
 				format(string, sizeof(string), "You have promoted %s to admin level %d.", GetName(targetid), level);
 				SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
@@ -641,7 +723,7 @@ CMD:asetlevel(playerid, params[]) // Promote or Demote an admin (Can only be use
 			else
 			{
 				format(adminstring, sizeof(adminstring), "%s: Demoted | Level: %d | By: %s [%d/%d/%d] [%d:%d:%d]", GetName(targetid), level, GetName(playerid), day, month, year, hour, minute, second);
-				AdminLog(playerid, adminstring);
+				AdminLog(targetid, adminstring);
 
 				format(string, sizeof(string), "You have demoted %s to admin level %d.", GetName(targetid), level);
 				SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
@@ -661,6 +743,7 @@ CMD:asetlevel(playerid, params[]) // Promote or Demote an admin (Can only be use
 	return 1;
 }
 
+// ------------------------------------------------------------------------------------------------
 CMD:mute(playerid, params[]) // Mute a player
 {
 	new targetid, reason[128], time, string[128], mutestring[128], day, month, year, hour, minute, second, acmdlogstring[128];
@@ -683,7 +766,7 @@ CMD:mute(playerid, params[]) // Mute a player
 			getdate(year, month, day);
 
 			format(acmdlogstring, sizeof(acmdlogstring), "Command: /mute %s %d [%d/%d/%d] [%d:%d:%d]", GetName(targetid), time, day, month, year, hour, minute, second);
-			AdminCommandLog(targetid, acmdlogstring);
+			AdminCommandLog(playerid, acmdlogstring);
 
 			format(mutestring, sizeof(mutestring), "Muted | Duration: %d | By: %s [%d/%d/%d] [%d:%d:%d]", time, GetName(playerid), day, month, year, hour, minute, second);
 			MuteLog(targetid, mutestring);
@@ -730,7 +813,7 @@ CMD:unmute(playerid, params[]) // Unmute a player
 			getdate(year, month, day);
 
 			format(acmdlogstring, sizeof(acmdlogstring), "Command: /unmute %s [%d/%d/%d] [%d:%d:%d]", GetName(targetid), day, month, year, hour, minute, second);
-			AdminCommandLog(targetid, acmdlogstring);
+			AdminCommandLog(playerid, acmdlogstring);
 
 			format(mutestring, sizeof(mutestring), "Unuted | By: %s [%d/%d/%d] [%d:%d:%d]", GetName(playerid), day, month, year, hour, minute, second);
 			MuteLog(targetid, mutestring);
@@ -751,11 +834,159 @@ CMD:unmute(playerid, params[]) // Unmute a player
 	return 1;	
 }
 
-CMD:goto(playerid, params[]) // Teleports to a player
+CMD:kick(playerid, params[]) // Kicks a player from the server
+{
+	new targetid, reason[256], string[128], day, month, year, hour, minute, second, acmdlogstring[128], kickstring[128];
+
+	if(Player[playerid][pAdminLevel] >= 1 || IsPlayerAdmin(playerid))
+	{
+		if(sscanf(params, "us[128]", targetid, reason))
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /kick [playerid/PartOfName] [reason]");
+
+		if(IsPlayerConnected(targetid))
+		{
+			if(targetid == playerid)
+				return SendClientMessage(playerid, COLOR_NEUTRAL, "You cannot use this command on yourself.");
+
+			gettime(hour, minute, second);
+			getdate(year, month, day);
+
+			format(string, sizeof(string), "You have kicked %s from the server. Reason: %s", GetName(targetid), reason);
+			SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
+
+			format(string, sizeof(string), "%s has been kicked from the server by admin %s. Reason: %s", GetName(targetid), GetName(playerid), reason);
+			SendClientMessageToAll(COLOR_RED, string);
+
+			format(string, sizeof(string), "You are kicked from the server by admin %s. Reason: %s", GetName(playerid), reason);
+			SendClientMessage(targetid, COLOR_RED, string);
+
+			SetTimerEx("DelayedKick", 1000, 0, "i", targetid); // calls the function DelayedKick to kick player with a delay of 1 second to show the message
+
+			format(kickstring, sizeof(kickstring), "Reason: %s | By: %s [%d/%d/%d] [%d:%d:%d]", reason, GetName(playerid), day, month, year, hour, minute, second);
+			KickLog(targetid, kickstring);
+
+			format(acmdlogstring, sizeof(acmdlogstring), "Command: /kick %s | Reason: %s [%d/%d/%d] [%d:%d:%d]", GetName(targetid), reason, day, month, year, hour, minute, second);
+			AdminCommandLog(playerid, acmdlogstring);
+		}
+		else
+			return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "The player is not connected!");
+	}
+	else
+		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
+	return 1;
+}
+
+CMD:warn(playerid, params[]) // Warns a player and bans on the third warn
+{
+	new targetid, reason[128], string[256], acmdlogstring[128], warnstring[128], banstring[128], day, month, year, hour, minute, second;
+
+	if(Player[playerid][pAdminLevel] >= 1 || IsPlayerAdmin(playerid))
+	{
+		if(sscanf(params, "us[128]", targetid, reason))
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /warn [playerid/PartOfName] [reason]");
+
+		if(IsPlayerConnected(targetid))
+		{
+			if(targetid == playerid)
+				return SendClientMessage(playerid, COLOR_NEUTRAL, "You cannot use this command on yourself.");
+
+			gettime(hour, minute, second);
+			getdate(year, month, day);
+
+			format(string, sizeof(string), "You have warned %s. Reason: %s", GetName(targetid), reason);
+			SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
+
+			format(string, sizeof(string), "%s has been warned by admin %s. Reason: %s", GetName(targetid), GetName(playerid), reason);
+			SendClientMessageToAll(COLOR_RED, string);
+
+			format(string, sizeof(string), "You are warned by admin %s. Reason: %s", GetName(playerid), reason);
+			SendClientMessage(targetid, COLOR_RED, string);
+
+			format(warnstring, sizeof(warnstring), "Warned | Reason: %s | By: %s [%d/%d/%d] [%d:%d:%d]", reason, GetName(playerid), day, month, year, hour, minute, second);
+			WarnLog(targetid, warnstring);
+
+			format(acmdlogstring, sizeof(acmdlogstring), "Command: /warn %s | Reason: %s [%d/%d/%d] [%d:%d:%d]", GetName(targetid), reason, day, month, year, hour, minute, second);
+			AdminCommandLog(playerid, acmdlogstring);
+
+			Player[targetid][pWarns]++;
+
+			SaveAccount(targetid);
+
+			if(Player[targetid][pWarns] == 3)
+			{
+				format(string, sizeof(string), "%s has been banned from the server. Reason: 3 Warns", GetName(targetid), GetName(playerid));
+				SendClientMessageToAll(COLOR_RED, string);
+
+				format(string, sizeof(string), "You are banned from the server. Reason: 3 Warns", GetName(playerid), reason);
+				SendClientMessage(targetid, COLOR_RED, string);
+
+				SetTimerEx("DelayedBan", 1000, 0, "i", targetid); // calls the function DelayedBan to ban player with a delay of 1 second to show the message
+
+				format(banstring, sizeof(banstring), "Reason: 3 Warns [%d/%d/%d] [%d:%d:%d]", day, month, year, hour, minute, second);
+				BanLog(targetid, banstring);
+			}
+		}
+		else
+			return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "The player is not connected!");
+	}
+	else
+		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
+	return 1;
+}
+
+CMD:unwarn(playerid, params[]) // Unwarns a player (Decreases one warn)
+{
+	new targetid, day, month, year, hour, minute, second, string[128], warnstring[128], acmdlogstring[128];
+
+	if(Player[playerid][pAdminLevel] >= 1 || IsPlayerAdmin(playerid))
+	{
+		if(sscanf(params, "u", targetid))
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /unwarn [playerid/PartOfName]");
+
+		if(IsPlayerConnected(targetid))
+		{
+			if(targetid == playerid)
+				return SendClientMessage(playerid, COLOR_NEUTRAL, "You cannot use this command on yourself.");
+
+			if(Player[targetid][pWarns] == 0)
+				return SendClientMessage(playerid, COLOR_NEUTRAL, "The player is not warned.");
+
+			gettime(hour, minute, second);
+			getdate(year, month, day);
+
+			format(string, sizeof(string), "You have unwarned %s.", GetName(targetid));
+			SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
+
+			format(string, sizeof(string), "%s has been unwarned by admin %s.", GetName(targetid), GetName(playerid));
+			SendClientMessageToAll(COLOR_RED, string);
+
+			format(string, sizeof(string), "You are unwarned by admin %s.", GetName(playerid));
+			SendClientMessage(targetid, COLOR_RED, string);
+
+			format(warnstring, sizeof(warnstring), "Unwarned | By: %s [%d/%d/%d] [%d:%d:%d]", GetName(playerid), day, month, year, hour, minute, second);
+			WarnLog(targetid, warnstring);
+
+			format(acmdlogstring, sizeof(acmdlogstring), "Command: /unwarn %s [%d/%d/%d] [%d:%d:%d]", GetName(targetid), day, month, year, hour, minute, second);
+			AdminCommandLog(playerid, acmdlogstring);
+
+			Player[targetid][pWarns]--;
+
+			SaveAccount(targetid);
+		}
+		else
+			return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "The player is not connected!");
+	}
+	else
+		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
+	return 1;
+}
+
+// ------------------------------------------------------------------------------------------------
+CMD:goto(playerid, params[]) // Teleports the admin to a player
 {
 	new targetid, acmdlogstring[128], day, month, year, hour, minute, second, Float:x, Float:y, Float:z;
 
-	if(Player[playerid][pAdminLevel] >= 3)
+	if(Player[playerid][pAdminLevel] >= 3 || IsPlayerAdmin(playerid))
 	{
 		if(sscanf(params, "u", targetid))
 			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /goto [playerid/PartOfName]");
@@ -772,7 +1003,9 @@ CMD:goto(playerid, params[]) // Teleports to a player
 			SetPlayerPos(playerid, x + 1, y + 1, z);
 
 			format(acmdlogstring, sizeof(acmdlogstring), "Command: /goto %s [%d/%d/%d] [%d:%d:%d]", GetName(targetid), day, month, year, hour, minute, second);
-			AdminCommandLog(targetid, acmdlogstring);
+			AdminCommandLog(playerid, acmdlogstring);
+
+			SendClientMessage(playerid, COLOR_SEAGREEN, "You have been teleported.");
 		}
 		else
 			return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "The player is not connected!");
@@ -782,11 +1015,11 @@ CMD:goto(playerid, params[]) // Teleports to a player
 	return 1;
 }
 
-CMD:gethere(playerid, params[])
+CMD:gethere(playerid, params[]) // Teleports a player near the admin
 {
 	new targetid, acmdlogstring[128], day, month, year, hour, minute, second, Float:x, Float:y, Float:z;
 
-	if(Player[playerid][pAdminLevel] >= 3)
+	if(Player[playerid][pAdminLevel] >= 3 || IsPlayerAdmin(playerid))
 	{
 		if(sscanf(params, "u", targetid))
 			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /gethere [playerid/PartOfName]");
@@ -803,7 +1036,9 @@ CMD:gethere(playerid, params[])
 			SetPlayerPos(targetid, x + 1, y + 1, z);
 
 			format(acmdlogstring, sizeof(acmdlogstring), "Command: /gethere %s [%d/%d/%d] [%d:%d:%d]", GetName(targetid), day, month, year, hour, minute, second);
-			AdminCommandLog(targetid, acmdlogstring);
+			AdminCommandLog(playerid, acmdlogstring);
+
+			SendClientMessage(targetid, COLOR_SEAGREEN, "You have been teleported.");
 		}
 		else
 			return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "The player is not connected!");
@@ -812,3 +1047,5 @@ CMD:gethere(playerid, params[])
 		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
 	return 1;
 }
+
+// ------------------------------------------------------------------------------------------------
