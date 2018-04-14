@@ -750,3 +750,65 @@ CMD:unmute(playerid, params[]) // Unmute a player
 		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
 	return 1;	
 }
+
+CMD:goto(playerid, params[]) // Teleports to a player
+{
+	new targetid, acmdlogstring[128], day, month, year, hour, minute, second, Float:x, Float:y, Float:z;
+
+	if(Player[playerid][pAdminLevel] >= 3)
+	{
+		if(sscanf(params, "u", targetid))
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /goto [playerid/PartOfName]");
+
+		if(IsPlayerConnected(targetid))
+		{
+			if(targetid == playerid)
+				return SendClientMessage(playerid, COLOR_NEUTRAL, "You cannot use this command on yourself.");
+
+			gettime(hour, minute, second);
+			getdate(year, month, day);
+
+			GetPlayerPos(targetid, x, y, z);
+			SetPlayerPos(playerid, x + 1, y + 1, z);
+
+			format(acmdlogstring, sizeof(acmdlogstring), "Command: /goto %s [%d/%d/%d] [%d:%d:%d]", GetName(targetid), day, month, year, hour, minute, second);
+			AdminCommandLog(targetid, acmdlogstring);
+		}
+		else
+			return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "The player is not connected!");
+	}
+	else
+		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
+	return 1;
+}
+
+CMD:gethere(playerid, params[])
+{
+	new targetid, acmdlogstring[128], day, month, year, hour, minute, second, Float:x, Float:y, Float:z;
+
+	if(Player[playerid][pAdminLevel] >= 3)
+	{
+		if(sscanf(params, "u", targetid))
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /gethere [playerid/PartOfName]");
+
+		if(IsPlayerConnected(targetid))
+		{
+			if(targetid == playerid)
+				return SendClientMessage(playerid, COLOR_NEUTRAL, "You cannot use this command on yourself.");
+
+			gettime(hour, minute, second);
+			getdate(year, month, day);
+
+			GetPlayerPos(playerid, x, y, z);
+			SetPlayerPos(targetid, x + 1, y + 1, z);
+
+			format(acmdlogstring, sizeof(acmdlogstring), "Command: /gethere %s [%d/%d/%d] [%d:%d:%d]", GetName(targetid), day, month, year, hour, minute, second);
+			AdminCommandLog(targetid, acmdlogstring);
+		}
+		else
+			return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "The player is not connected!");
+	}
+	else
+		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
+	return 1;
+}
