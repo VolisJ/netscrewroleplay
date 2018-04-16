@@ -123,6 +123,7 @@ forward AdminCommandLog(playerid, acmdlogstring[]);
 forward KickLog(playerid, kickstring[]);
 forward WarnLog(playerid, warnstring[]);
 forward BanLog(playerid, banstring[]);
+forward BanLog2(playername[], banstring2[]);
 forward IpBanLog(ip[], ipbanstring[]);
 forward GotoLog(playerid, gotostring[]);
 forward ReportLog(reportstring[]);
@@ -147,7 +148,7 @@ public OnPlayerConnect(playerid)
 {
 	TogglePlayerSpectating(playerid, 1);
 	CheckAccountExist(playerid);
-	SafeResetPlayerMoney(playerid);
+	// SafeResetPlayerMoney(playerid);
 
 	accountstimer[playerid] = SetTimerEx("SaveAccount", 60000, 1, "i", playerid);
 	
@@ -707,13 +708,26 @@ public WarnLog(playerid, warnstring[]) // Makes log of player warns
 	fclose(hFile);
 }
 
-public BanLog(playerid, banstring[]) // Makes log of player bans
+public BanLog(playerid, banstring[]) // Makes log of player bans (takes playerid as parameter)
 {
 	new entry[256], string[128];
 	format(entry, sizeof(entry), "%s\r\n", banstring);
 
 	new File:hFile;
 	format(string, sizeof(string), "logs/bans/%s.log", GetName(playerid));
+	hFile = fopen(string, io_append);
+	fwrite(hFile, entry);
+
+	fclose(hFile);
+}
+
+public BanLog2(playername[], banstring2[]) // Makes log of player bans (takes name as parameter)
+{
+	new entry[256], string[128];
+	format(entry, sizeof(entry), "%s\r\n", banstring2);
+
+	new File:hFile;
+	format(string, sizeof(string), "logs/bans/%s.log", playername);
 	hFile = fopen(string, io_append);
 	fwrite(hFile, entry);
 
@@ -952,7 +966,7 @@ CMD:mute(playerid, params[]) // Mute a player
 			SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
 
 			format(string, sizeof(string), "You are muted by admin %s for %d minutes. Reason: %s", GetName(playerid), time, reason);
-			SendClientMessage(playerid, COLOR_RED, string);
+			SendClientMessage(targetid, COLOR_RED, string);
 
 			format(string, sizeof(string), "%s is muted by admin %s for %d minutes. Reason: %s", GetName(targetid), GetName(playerid), time, reason);
 			SendClientMessageToAll(COLOR_RED, string);
@@ -1436,54 +1450,135 @@ CMD:banip(playerid, params[]) // Bans an IP address permanently (until unbanned 
 
 CMD:unban(playerid, params[]) // Unbans an account
 {
-	new targetid, reason[128], string[128], acmdlogstring[128], banstring[128], day, month, year, hour, minute, second;
+	new reason[128], string[128], acmdlogstring[128], banstring2[128], day, month, year, hour, minute, second, playername[MAX_PLAYER_NAME];
 
+	new tEmail[128], tPassword[129], tSex, tSkin, tCash, tAdminLevel, tVipLevel, tHelperLevel, tIsBanned, tIsMuted, tMuteTime, tWarns, tRegCheck;
+
+	new filename2[64], line2[256];
+	
 	if(Player[playerid][pAdminLevel] >= 2 || IsPlayerAdmin(playerid))
 	{
-		if(sscanf(params, "us[128]", targetid, reason))
-			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /unban [playerid/PartOfName] [reason]");
+		if(sscanf(params, "s[128]s[128]", playername, reason))
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /unban [playername] [reason]");
 
 		gettime(hour, minute, second);
 		getdate(year, month, day);
 	
-		format(string, sizeof(string), "You have unbanned %s from the server. Reason: %s", GetName(targetid), reason);
-		SendClientMessage(playerid, COLOR_RED, string);
-
 		new filename[64], line[256], s, key[64];
 		new File:handle;
-		handle = fopen(filename, io_read);
 
-		format(filename, sizeof(filename), ACCOUNT_PATH "%s.ini", GetName(targetid));
+		format(filename, sizeof(filename), ACCOUNT_PATH "%s.ini", playername);
 
-		while(fread(handle, line))
+		if(fexist(filename))
 		{
-			StripNL(line);
-			s = strfind(line, "=");
+			handle = fopen(filename, io_read);
+			while(fread(handle, line))
+			{
+				StripNL(line);
+				s = strfind(line, "=");
 
-			if(!line[0] || s < 1)
-				continue;
+				if(!line[0] || s < 1)
+					continue;
 
-			strmid(key, line, 0, s++);
-			if(strcmp(key, "IsBanned") == 0)
-				Player[targetid][pIsBanned] = strval(line[s]);
-			else if(strcmp(key, "BanTime") == 0)
-				Player[targetid][pBanTime] = strval(line[s]);
-			else if(strcmp(key, "BanExp") == 0)
-				Player[targetid][pBanExp] = strval(line[s]);
-
-			Player[targetid][pIsBanned] = 0;
-			Player[targetid][pBanTime] = 0;
-			Player[targetid][pBanExp] = 0;
+				strmid(key, line, 0, s++);
+				if(strcmp(key, "Email") == 0)
+					sscanf(line[s], "s[128]", tEmail);
+				else if(strcmp(key, "Password") == 0)
+					sscanf(line[s], "s[129]", tPassword);
+				else if(strcmp(key, "Sex") == 0)
+					tSex = strval(line[s]);
+				else if(strcmp(key, "Skin") == 0)
+					tSkin = strval(line[s]);
+				else if(strcmp(key, "Cash") == 0)
+					tCash = strval(line[s]);
+				else if(strcmp(key, "AdminLevel") == 0)
+					tAdminLevel = strval(line[s]);
+				else if(strcmp(key, "VipLevel") == 0)
+					tVipLevel = strval(line[s]);
+				else if(strcmp(key, "HelperLevel") == 0)
+					tHelperLevel = strval(line[s]);
+				else if(strcmp(key, "IsBanned") == 0)
+					tIsBanned = strval(line[s]);
+				else if(strcmp(key, "IsMuted") == 0)
+					tIsMuted = strval(line[s]);
+				else if(strcmp(key, "MuteTime") == 0)
+					tMuteTime = strval(line[s]);
+				else if(strcmp(key, "Warns") == 0)
+					tWarns = strval(line[s]);
+				else if(strcmp(key, "RegCheck") == 0)
+					tRegCheck = strval(line[s]);
+			}
+			fclose(handle);
 		}
-		fclose(handle);
+		else
+			return SendClientMessage(playerid, COLOR_NEUTRAL, "Player does not exist.");
 
-		SaveAccount(targetid);
+		if(tIsBanned == 0)
+		{
+			new string2[128];
+			format(string2, sizeof(string2), "%s is not banned", playername);
+			return SendClientMessage(playerid, COLOR_NEUTRAL, string2);
+		}
 
-		format(acmdlogstring, sizeof(acmdlogstring), "Command: /unban %s %s [%d/%d/%d] [%d:%d:%d]", GetName(targetid), reason, day, month, year, hour, minute, second);
+		format(filename2, sizeof(filename2), ACCOUNT_PATH "%s.ini", playername);
+
+		new File:handle2 = fopen(filename2, io_write);
+
+		format(line2, sizeof(line2), "Email=%s\r\n", tEmail);
+		fwrite(handle2, line2);
+
+		format(line2, sizeof(line2), "Password=%s\r\n", tPassword);
+		fwrite(handle2, line2);
+
+		format(line2, sizeof(line2), "Sex=%d\r\n", tSex);
+		fwrite(handle2, line2);
+
+		format(line2, sizeof(line2), "Skin=%d\r\n", tSkin);
+		fwrite(handle2, line2);
+
+		format(line2, sizeof(line2), "Cash=%d\r\n", tCash);
+		fwrite(handle2, line2);
+
+		format(line2, sizeof(line2), "AdminLevel=%d\r\n", tAdminLevel);
+		fwrite(handle2, line2);
+
+		format(line2, sizeof(line2), "VipLevel=%d\r\n", tVipLevel);
+		fwrite(handle2, line2);
+
+		format(line2, sizeof(line2), "HelperLevel=%d\r\n", tHelperLevel);
+		fwrite(handle2, line2);
+			
+		format(line2, sizeof(line2), "IsBanned=%d\r\n", 0);
+		fwrite(handle2, line2);
+
+		format(line2, sizeof(line2), "IsMuted=%d\r\n", tIsMuted);
+		fwrite(handle2, line2);
+
+		format(line2, sizeof(line2), "MuteTime=%d\r\n", tMuteTime);
+		fwrite(handle2, line2);
+
+		format(line2, sizeof(line2), "Warns=%d\r\n", tWarns);
+		fwrite(handle2, line2);
+
+		format(line2, sizeof(line2), "RegCheck=%d\r\n", tRegCheck);
+		fwrite(handle2, line2);
+
+		format(line2, sizeof(line2), "BanTime=%d\r\n", 0);
+		fwrite(handle2, line2);
+
+		format(line2, sizeof(line2), "BanExp=%d\r\n", 0);
+		fwrite(handle2, line2);
+
+		format(string, sizeof(string), "You have unbanned %s from the server. Reason: %s", playername, reason);
+		SendClientMessage(playerid, COLOR_RED, string);
+
+		fclose(handle2);
+
+		format(acmdlogstring, sizeof(acmdlogstring), "Command: /unban %s %s [%d/%d/%d] [%d:%d:%d]", playername, reason, day, month, year, hour, minute, second);
 		AdminCommandLog(playerid, acmdlogstring);
 
-		format(banstring, sizeof(banstring), "Unbanned | Reason: %s | By %s [%d/%d/%d] [%d:%d:%d]", reason, GetName(playerid), day, month, year, hour, minute, second);
-		BanLog(targetid, banstring);
+		format(banstring2, sizeof(banstring2), "Unbanned | Reason: %s | By %s [%d/%d/%d] [%d:%d:%d]", reason, GetName(playerid), day, month, year, hour, minute, second);
+		BanLog2(playername, banstring2);
 	}
 	else
 		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
@@ -1550,7 +1645,7 @@ CMD:freeze(playerid, params[]) // Freezes a player's position
 
 CMD:unfreeze(playerid, params[]) // Unfreezes a player's position
 {
-	new targetid, day, month, year, hour, minute, second, acmdlogstring[128], string[MAX_PLAYER_NAME];
+	new targetid, day, month, year, hour, minute, second, acmdlogstring[128], string[256];
 
 	if(Player[playerid][pAdminLevel] >= 2 || IsPlayerAdmin(playerid))
 	{
@@ -2124,7 +2219,7 @@ CMD:givegun(playerid, params[]) // Gives weapon to a player
 			format(string, sizeof(string), "You have given weapon ID %d with %d ammo to %s.", weapon, ammo, GetName(targetid));
 			SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
 
-			format(string, sizeof(string), "Admins %s has given you weapon ID with %d ammo.", GetName(playerid), weapon, ammo);
+			format(string, sizeof(string), "Admins %s has given you weapon ID %d with %d ammo.", GetName(playerid), weapon, ammo);
 			SendClientMessage(targetid, COLOR_LIGHTBLUE, string);
 
 			gettime(hour, minute, second);
@@ -2144,7 +2239,7 @@ CMD:givegun(playerid, params[]) // Gives weapon to a player
 // ------------------------------------------------------------------------------------------------
 CMD:sethp(playerid, params[]) // Sets a player's health to a specific value
 {
-	new targetid, Float:hp, Float:X, Float:Y, Float:Z, day, month, year, hour, minute, second, acmdlogstring[128], string[128];
+	new targetid, hp, Float:X, Float:Y, Float:Z, day, month, year, hour, minute, second, acmdlogstring[128], string[128];
 	if(Player[playerid][pAdminLevel] >= 4 || IsPlayerAdmin(playerid))
 	{
 		if(sscanf(params, "ui", targetid, hp))
@@ -2160,13 +2255,13 @@ CMD:sethp(playerid, params[]) // Sets a player's health to a specific value
 			gettime(hour, minute, second);
 			getdate(year, month, day);
 
-			format(string, sizeof(string), "Admin %s has set your hp to %f", GetName(playerid), hp);
+			format(string, sizeof(string), "Admin %s has set your hp to %d.", GetName(playerid), hp);
 			SendClientMessage(targetid, COLOR_MEDIUMBLUE, string);
 
-			format(string, sizeof(string), "You have set %s's hp to %f", GetName(targetid), hp);
+			format(string, sizeof(string), "You have set %s's hp to %d.", GetName(targetid), hp);
 			SendClientMessage(playerid, COLOR_MEDIUMBLUE, string);
 
-			format(acmdlogstring, sizeof(acmdlogstring), "Command: /sethp %s %f [%d/%d/%d] [%d:%d:%d]", GetName(targetid), hp, day, month, year, hour, minute, second);
+			format(acmdlogstring, sizeof(acmdlogstring), "Command: /sethp %s %d [%d/%d/%d] [%d:%d:%d]", GetName(targetid), hp, day, month, year, hour, minute, second);
 			AdminCommandLog(playerid, acmdlogstring);
 		}
 		else
@@ -2242,5 +2337,25 @@ CMD:report(playerid, params[]) // Sends a report to admins
 
 	format(reportstring, sizeof(reportstring), "%s | %s [%d/%d/%d] [%d:%d:%d]", GetName(targetid), text, day, month, year, hour, minute, second);
 	ReportLog(reportstring);
+	return 1;
+}
+
+// ------------------------------------------------------------------------------------------------
+CMD:admins(playerid, params[]) // Displays a list of online admins with levels
+{
+	new string[128];
+
+	SendClientMessage(playerid, COLOR_YELLOW, "Online Admins:");
+	for(new i = 0; i < MAX_PLAYERS; i++)
+	{
+		if(IsPlayerConnected(i))
+		{
+			if(Player[i][pAdminLevel] > 0)
+			{
+				format(string, sizeof(string), "%s | Level %d", GetName(i), Player[i][pAdminLevel]);
+				SendClientMessage(playerid, COLOR_MEDIUMBLUE, string);
+			}
+		}
+	}
 	return 1;
 }
