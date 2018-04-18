@@ -20,6 +20,7 @@
 #include <a_samp>
 #include <YSI\Y_ini>
 #include <sscanf2>
+#include <streamer>
 #include "colors.pwn"
 #include <zcmd>
 
@@ -27,6 +28,8 @@
 #define GameMode "NSRP v1.0"
 
 #define ACCOUNT_PATH "accounts/"
+#define DEALERSHIP_PATH "dealerships/"
+#define VEHICLE_PATH "vehicles/"
 
 #define COL_WHITE "{FFFFFF}"
 #define COL_RED "{AA3333}"
@@ -35,13 +38,23 @@
 #define Spawn_Y -2240.9397
 #define Spawn_Z 13.5469
 
+#define MAX_DEALERSHIPS 10
+
 // ---------------------------------Global Variable Declarations------------------------------
 new accountstimer[MAX_PLAYERS];
 new mutetimer[MAX_PLAYERS];
+
 new gobackstatus[MAX_PLAYERS];
 new Float:savedposx[MAX_PLAYERS];
 new Float:savedposy[MAX_PLAYERS];
 new Float:savedposz[MAX_PLAYERS];
+
+new DealershipStatus[MAX_DEALERSHIPS];
+new Float:DealershipPosition[MAX_DEALERSHIPS][3];
+new DealershipPickup[MAX_DEALERSHIPS];
+new Text3D:VehicleLabel[MAX_VEHICLES];
+
+new vehicles;
 
 new VehicleNames[][] = {
 	"Landstalker","Bravura","Buffalo","Linerunner","Perennial","Sentinel","Dumper","Firetruck","Trashmaster","Stretch","Manana","Infernus",
@@ -84,12 +97,32 @@ enum PlayerData
 }
 new Player[MAX_PLAYERS][PlayerData];
 
+enum VehicleData
+{
+	vStatus,
+	vModel,
+	Float:vPosition[3],
+	Float:vAngle,
+	vColor1,
+	vColor2,
+	vPrice,
+	vOwner[MAX_PLAYER_NAME],
+	vInterior,
+	vVirtualWorld,
+	vCarPlate,
+	vMods[14],
+	vPaintjob
+}
+new Vehicle[MAX_VEHICLES][VehicleData];
+
 enum dialogs
 {
 	DIALOG_LOGIN,
 	DIALOG_REGISTER_1,
 	DIALOG_REGISTER_2,
-	DIALOG_REGISTER_3
+	DIALOG_REGISTER_3,
+
+	DIALOG_AHELP
 }
 
 native WP_Hash(buffer[], len, const str[]);
@@ -129,6 +162,20 @@ forward GotoLog(playerid, gotostring[]);
 forward ReportLog(reportstring[]);
 forward PMLog(playerid, pmlogstring[]);
 
+forward IsBicycle(vehicleid);
+forward IsAirplane(vehicleid);
+forward RangeSend(Float:range, playerid, text[], color);
+
+forward UpdateDealership(dealershipid, removeold);
+forward SaveDealership(dealershipid);
+forward LoadDealerships();
+forward IsValidDealership(dealershipid);
+forward UpdateVehicle(vehicleid, removeold);
+forward IsValidDealershipVehicle(vehicleid);
+forward SaveVehicle(vehicleid);
+forward LoadVehicles();
+forward IsValidCivilianVehicle(vehicleid);
+
 main() {}
 
 // ------------------------------------Built - In Functions------------------------------------
@@ -140,6 +187,19 @@ public OnGameModeInit()
 	EnableStuntBonusForAll(0);
 	UsePlayerPedAnims();
 	ManualVehicleEngineAndLights();
+
+	LoadDealerships();
+	LoadVehicles();
+
+	for(new i = 0; i < MAX_DEALERSHIPS; i++)
+	{
+		UpdateDealership(i, 0);
+	}
+
+	for(new i = 1; i < MAX_VEHICLES; i++)
+	{
+		UpdateVehicle(i, 0);
+	}
 
 	return 1;
 }
@@ -260,8 +320,84 @@ public OnPlayerText(playerid, text[])
 	}
 
 	format(string, sizeof(string), "%s says: %s", GetName(playerid), text);
-	SendClientMessage(playerid, COLOR_WHITE, string);
+	RangeSend(30.0, playerid, string, COLOR_WHITE);
 	return 0;
+}
+
+public OnPlayerPickUpPickup(playerid, pickupid)
+{
+	for(new i = 0; i < MAX_DEALERSHIPS; i++)
+		if(pickupid == DealershipPickup[i])
+		{
+			if(i == 0)
+				GameTextForPlayer(playerid, "Lowrider Dealership", 1000, 1);
+			else if(i == 1)
+				GameTextForPlayer(playerid, "Luxury Dealership", 1000, 1);
+			else if(i == 2)
+				GameTextForPlayer(playerid, "Airplane Dealership", 1000, 1);
+			else if(i == 3)
+				GameTextForPlayer(playerid, "Sea Dealership", 1000, 1);
+			else if(i == 4)
+				GameTextForPlayer(playerid, "Offroad Dealership", 1000, 1);
+			else if(i == 5)
+				GameTextForPlayer(playerid, "Bikes Dealership", 1000, 1);
+			else if(i == 6)
+				GameTextForPlayer(playerid, "Standard Dealership", 1000, 1);
+			else if(i == 7)
+				GameTextForPlayer(playerid, "Special Dealership", 1000, 1);
+		}
+	return 1;
+}
+
+public OnPlayerKeyStateChange(playerid, newkeys, oldkeys)
+{
+	new engine, lights, alarm, doors, bonnet, boot, objective, string[128];
+	new vid = GetPlayerVehicleID(playerid);
+
+	if(newkeys & KEY_SUBMISSION)
+	{
+		if(IsBicycle(vid) == 1)
+			return 1;
+
+		if(GetPlayerVehicleSeat(playerid) == 0 && IsAirplane(vid) == 0)
+		{
+			GetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
+
+			if(engine == 1)
+			{
+				engine = 0;
+				format(string, sizeof(string), "%s stops the engine of a %s.", GetName(playerid), GetVehicleName(vid));
+				RangeSend(30.0, playerid, string, COLOR_PINK);
+			}
+			else
+			{
+				engine = 1;
+				format(string, sizeof(string), "%s starts the engine of a %s.", GetName(playerid), GetVehicleName(vid));
+				RangeSend(30.0, playerid, string, COLOR_PINK);
+			}
+
+			SetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
+		}
+	}
+
+	if(newkeys & KEY_ACTION)
+	{
+		if(IsBicycle(vid) == 1)
+			return 1;
+
+		if(GetPlayerVehicleSeat(playerid) == 0 && IsAirplane(vid) == 0)
+		{
+			GetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
+
+			if(lights == 1)
+				lights = 0;
+			else
+				lights = 1;
+
+			SetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
+		}
+	}
+	return 1;
 }
 
 // -----------------------------------User Defined Functions-------------------------------------
@@ -592,6 +728,281 @@ public SendToAdmins(color, text[]) // Sends a mesage to all admins
 		}
 	}
 	return 1;
+}
+
+public IsBicycle(vehicleid) // Checks if the vehicle is a bicyle
+{
+	switch(GetVehicleModel(vehicleid))
+	{
+		case 481,509,510:
+			return 1;
+	}
+	return 0;
+}
+
+public IsAirplane(vehicleid) // Checks if the vehicle is an airplane
+{
+	switch(GetVehicleModel(vehicleid))
+	{
+		case 417,425,447,460,469,476,487,488,497,511,512,513,519,520,548,553,563,577,592,593:
+			return 1;
+	}
+	return 0;
+}
+
+public RangeSend(Float:range, playerid, text[], color) // Sends a message to a specific range
+{
+	new Float:px, Float:py, Float:pz;
+
+	GetPlayerPos(playerid, px, py, pz);
+
+	for(new i = 0; i < MAX_PLAYERS; i++)
+	{
+		if(IsPlayerConnected(i))
+		{
+			if(GetPlayerVirtualWorld(playerid) == GetPlayerVirtualWorld(i))
+			{
+				if(IsPlayerInRangeOfPoint(i, range, px, py, pz))
+					SendClientMessage(i, color, text);
+			}
+		}
+	}
+	return 1;
+}
+
+public UpdateDealership(dealershipid, removeold) // Updates dealership data and creates pickup and icon
+{
+	if(DealershipStatus[dealershipid] == 1)
+	{
+		if(removeold == 1)
+			DestroyPickup(DealershipPickup[dealershipid]);
+		DealershipPickup[dealershipid] = CreatePickup(1239, 1, DealershipPosition[dealershipid][0], DealershipPosition[dealershipid][1], DealershipPosition[dealershipid][2]);
+	}
+	return 1;
+}
+
+public SaveDealership(dealershipid) // Saves dealership data to .ini file
+{
+	new filename[64], line[256];
+
+	format(filename, sizeof(filename), DEALERSHIP_PATH "d%d.ini", dealershipid);
+
+	new File:handle = fopen(filename, io_write);
+
+	format(line, sizeof(line), "Status=%d\r\n", DealershipStatus[dealershipid]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "Position=%f, %f, %f\r\n", DealershipPosition[dealershipid][0], DealershipPosition[dealershipid][1], DealershipPosition[dealershipid][2]);
+	fwrite(handle, line);
+
+	fclose(handle);
+}
+
+public LoadDealerships() // Loads dealership data from .ini file
+{
+	new File:handle, count;
+	new filename[64], line[256], s, key[64];
+	for(new i = 0; i < MAX_DEALERSHIPS; i++)
+	{
+		format(filename, sizeof(filename), DEALERSHIP_PATH "d%d.ini", i);
+
+		if(!fexist(filename))
+			continue;
+
+		handle = fopen(filename, io_read);
+		while(fread(handle, line))
+		{
+			StripNL(line);
+			s = strfind(line, "=");
+
+			if(!line[0] || s < 1)
+				continue;
+
+			strmid(key, line, 0, s++);
+			if(strcmp(key, "Status") == 0)
+				DealershipStatus[i] = strval(line[s]);
+			else if(strcmp(key, "Position") == 0)
+				sscanf(line[s], "p<,>fff", DealershipPosition[i][0], DealershipPosition[i][1], DealershipPosition[i][2]);
+		}
+		fclose(handle);
+		if(DealershipStatus[i])
+			count++;
+	}
+	printf("  Loaded %d dealerships", count);
+}
+
+public IsValidDealership(dealershipid) // Checks if a dealership exists and returns 1
+{
+	if(DealershipStatus[dealershipid] == 1)
+		return 1;
+	return 0;
+}
+
+public IsValidDealershipVehicle(vehicleid) // Checks if a dealership exists and returns 1
+{
+	if(Vehicle[vehicleid][vStatus] == 1 && Vehicle[vehicleid][vPrice] > 0)
+		return 1;
+	return 0;
+}
+
+public IsValidCivilianVehicle(vehicleid) // Checks if a dealership exists and returns 1
+{
+	if(Vehicle[vehicleid][vStatus] == 1 && Vehicle[vehicleid][vPrice] == 0 && strcmp(Vehicle[vehicleid][vOwner], "0") == 0)
+		return 1;
+	return 0;
+}
+
+public UpdateVehicle(vehicleid, removeold) // Updates vehicle data and creates label
+{
+	new vid, string[256];
+
+	if(Vehicle[vehicleid][vStatus] == 1)
+	{
+		if(removeold == 1)
+		{
+			DestroyVehicle(vehicleid);
+			DestroyDynamic3DTextLabel(VehicleLabel[vehicleid]);
+		}
+
+		if(IsValidCivilianVehicle(vehicleid) == 1)
+		{
+			vid = CreateVehicle(Vehicle[vehicleid][vModel], Vehicle[vehicleid][vPosition][0], Vehicle[vehicleid][vPosition][1], Vehicle[vehicleid][vPosition][2], Vehicle[vehicleid][vAngle], random(256), random(256), 900);
+
+			LinkVehicleToInterior(vid, Vehicle[vehicleid][vInterior]);
+			SetVehicleVirtualWorld(vid, Vehicle[vehicleid][vVirtualWorld]);
+
+			for(new i = 0; i < 14; i++)
+			{
+				AddVehicleComponent(vid, Vehicle[vehicleid][vMods][i]);
+			}
+
+			ChangeVehiclePaintjob(vid, Vehicle[vehicleid][vPaintjob]);
+			return 1;
+		}
+		else if(IsValidDealershipVehicle(vehicleid) == 1)
+		{
+			vid = CreateVehicle(Vehicle[vehicleid][vModel], Vehicle[vehicleid][vPosition][0], Vehicle[vehicleid][vPosition][1], Vehicle[vehicleid][vPosition][2], Vehicle[vehicleid][vAngle], random(256), random(256), 60);
+
+			LinkVehicleToInterior(vid, Vehicle[vehicleid][vInterior]);
+			SetVehicleVirtualWorld(vid, Vehicle[vehicleid][vVirtualWorld]);
+
+			for(new i = 0; i < 14; i++)
+			{
+				AddVehicleComponent(vid, Vehicle[vehicleid][vMods][i]);
+			}
+
+			ChangeVehiclePaintjob(vid, Vehicle[vehicleid][vPaintjob]);
+
+			format(string, sizeof(string), "%s\nPrice: $%d", GetVehicleName(vid), Vehicle[vehicleid][vPrice]);
+			VehicleLabel[vid] = CreateDynamic3DTextLabel(string, COLOR_PINK, Vehicle[vehicleid][vPosition][0], Vehicle[vehicleid][vPosition][1], Vehicle[vehicleid][vPosition][2], 20.0, INVALID_PLAYER_ID, vid, 0, Vehicle[vehicleid][vVirtualWorld], Vehicle[vehicleid][vInterior], -1, 20.0);
+		}
+	}
+	return 1;
+}
+
+public SaveVehicle(vehicleid) // Saves vehicle data to .ini file
+{
+	new filename[64], line[256];
+
+	format(filename, sizeof(filename), VEHICLE_PATH "v%d.ini", vehicleid);
+
+	new File:handle = fopen(filename, io_write);
+
+	format(line, sizeof(line), "Status=%d\r\n", Vehicle[vehicleid][vStatus]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "Model=%d\r\n", Vehicle[vehicleid][vModel]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "Position=%f, %f, %f\r\n", Vehicle[vehicleid][vPosition][0], Vehicle[vehicleid][vPosition][1], Vehicle[vehicleid][vPosition][2]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "Angle=%f\r\n", Vehicle[vehicleid][vAngle]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "Color1=%d\r\n", Vehicle[vehicleid][vColor1]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "Color2=%d\r\n", Vehicle[vehicleid][vColor2]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "Price=%d\r\n", Vehicle[vehicleid][vPrice]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "Owner=%s\r\n", Vehicle[vehicleid][vOwner]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "Interior=%d\r\n", Vehicle[vehicleid][vInterior]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "VW=%d\r\n", Vehicle[vehicleid][vVirtualWorld]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "CarPlate=%s\r\n", Vehicle[vehicleid][vCarPlate]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "Paintjob=%d\r\n", Vehicle[vehicleid][vPaintjob]);
+	fwrite(handle, line);
+
+	for(new m = 0; m < 14; m++)
+	{
+		format(line, sizeof(line), "Mod%d=%d\r\n", Vehicle[vehicleid][vMods][m]);
+		fwrite(handle, line);
+	}
+
+	fclose(handle);
+}
+
+public LoadVehicles() // Loads vehicle data from .ini file
+{
+	new File:handle, count;
+	new filename[64], line[256], s, key[64];
+	for(new i = 1; i < MAX_VEHICLES; i++)
+	{
+		format(filename, sizeof(filename), VEHICLE_PATH "v%d.ini", i);
+
+		if(!fexist(filename))
+			continue;
+
+		handle = fopen(filename, io_read);
+		while(fread(handle, line))
+		{
+			StripNL(line);
+			s = strfind(line, "=");
+
+			if(!line[0] || s < 1)
+				continue;
+
+			strmid(key, line, 0, s++);
+			if(strcmp(key, "Status") == 0)
+				Vehicle[i][vStatus] = strval(line[s]);
+			else if(strcmp(key, "Model") == 0)
+				Vehicle[i][vModel] = strval(line[s]);
+			else if(strcmp(key, "Position") == 0)
+				sscanf(line[s], "p<,>fff", Vehicle[i][vPosition][0], Vehicle[i][vPosition][1], Vehicle[i][vPosition][2]);
+			else if(strcmp(key, "Angle") == 0)
+				sscanf(line[s], "f", Vehicle[i][vAngle]);
+			else if(strcmp(key, "Color1") == 0)
+				sscanf(line[s], "i", Vehicle[i][vColor1]);
+			else if(strcmp(key, "Color2") == 0)
+				sscanf(line[s], "i", Vehicle[i][vColor2]);
+			else if(strcmp(key, "Interior") == 0)
+				Vehicle[i][vInterior] = strval(line[s]);
+			else if(strcmp(key, "VW") == 0)
+				Vehicle[i][vVirtualWorld] = strval(line[s]);
+			else if(strcmp(key, "Price") == 0)
+				Vehicle[i][vPrice] = strval(line[s]);
+			else if(strcmp(key, "Owner") == 0)
+				sscanf(line[s], "s[128]", Vehicle[i][vOwner]);
+			else if(strcmp(key, "vCarPlate") == 0)
+				sscanf(line[s], "s[128]", Vehicle[i][vCarPlate]);
+		}
+		fclose(handle);
+		if(Vehicle[i][vStatus] == 1)
+			count++;
+	}
+	printf("  Loaded %d vehicles", count);
+	vehicles = count;
 }
 
 // ------------------------Safe Money Functions (Anti - Money Cheat)------------------------------
@@ -2019,17 +2430,287 @@ CMD:respawnallvehicles(playerid, params[]) // Respawns all vehicles
 			if(IsPlayerInAnyVehicle(i))
 				vehicleused[GetPlayerVehicleID(i)] = true;
 
-		for(new i = 0; i < MAX_VEHICLES; i++)
+		for(new i = 1; i < MAX_VEHICLES; i++)
 			if(!vehicleused[i])
 				SetVehicleToRespawn(i);
 
 		format(string, sizeof(string), "Admin %s has respawned all unused vehicles.", GetName(playerid));
-		SendClientMessageToAll(COLOR_LIGHTBLUE, string);
+		SendToAdmins(COLOR_LIGHTBLUE, string);
 
 		gettime(hour, minute, second);
 		getdate(year, month, day);
 
 		format(acmdlogstring, sizeof(acmdlogstring), "Command: /rav [%d/%d/%d] [%d:%d:%d]", day, month, year, hour, minute, second);
+		AdminCommandLog(playerid, acmdlogstring);
+	}
+	else
+		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
+	return 1;
+}
+
+CMD:createdealership(playerid, params[]) // Creates a new dealership
+{
+	new string[128], day, month, year, hour, minute, second, acmdlogstring[128];
+
+	if(Player[playerid][pAdminLevel] == 6 || IsPlayerAdmin(playerid))
+	{
+		for(new i = 0; i < MAX_DEALERSHIPS; i++)
+		{
+			if(DealershipStatus[i] == 0)
+			{
+				DealershipStatus[i] = 1;
+				GetPlayerPos(playerid, DealershipPosition[i][0], DealershipPosition[i][1], DealershipPosition[i][2]);
+
+				UpdateDealership(i, 0);
+				SaveDealership(i);
+
+				gettime(hour, minute, second);
+				getdate(year, month, day);
+
+				format(acmdlogstring, sizeof(acmdlogstring), "Command: /createdealership [%d/%d/%d] [%d:%d:%d]", day, month, year, hour, minute, second);
+				AdminCommandLog(playerid, acmdlogstring);
+
+				format(string, sizeof(string), "Dealership %d created.", i);
+				return SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
+			}
+		}
+		SendClientMessage(playerid, COLOR_NEUTRAL, "Maximum dealership limit reached.");
+	}
+	else
+		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
+	return 1;
+}
+
+CMD:gotod(playerid, params[])
+	return cmd_gotodealership(playerid, params);
+
+CMD:gotodealership(playerid, params[]) // Teleports the player to the specified dealership
+{
+	new dealershipid, Float:X, Float:Y, Float:Z, string[128], day, month, year, hour, minute, second, acmdlogstring[128], gotostring[128];
+
+	if(Player[playerid][pAdminLevel] >= 3 || IsPlayerAdmin(playerid))
+	{
+		if(sscanf(params, "i", dealershipid))
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /gotodealership [dealershipid]");
+
+		if(IsValidDealership(dealershipid) == 0)
+			return SendClientMessage(playerid, COLOR_NEUTRAL, "Invalid dealership ID!");
+
+		GetPlayerPos(playerid, X, Y, Z);
+		savedposx[playerid] = X;
+		savedposy[playerid] = Y;
+		savedposz[playerid] = Z;
+
+		SetPlayerPos(playerid, DealershipPosition[dealershipid][0], DealershipPosition[dealershipid][1], DealershipPosition[dealershipid][2]);
+
+		format(string, sizeof(string), "Teleported to dealership %d", dealershipid);
+		SendClientMessage(playerid, COLOR_PINK, string);
+
+		gettime(hour, minute, second);
+		getdate(year, month, day);
+
+		format(gotostring, sizeof(gotostring), "gotod %d [%d/%d/%d] [%d:%d:%d]", dealershipid, day, month, year, hour, minute, second);
+		GotoLog(playerid, gotostring);
+
+		format(acmdlogstring, sizeof(acmdlogstring), "Command: /gotodealership %d [%d/%d/%d] [%d:%d:%d]", dealershipid, day, month, year, hour, minute, second);
+		AdminCommandLog(playerid, acmdlogstring);
+	}
+	else
+		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
+	return 1;
+}
+
+CMD:cdv(playerid, params[])
+	return cmd_createdvehicle(playerid, params);
+
+CMD:createdvehicle(playerid, params[]) // Creates a dealership vehicle
+{
+	new dealershipid, Float:X, Float:Y, Float:Z, Float:angle, price, modelid, model[64], string[128], day, month, year, hour, minute, second, acmdlogstring[128];
+
+	if(Player[playerid][pAdminLevel] == 6 || IsPlayerAdmin(playerid))
+	{
+		if(sscanf(params, "is[128]i", dealershipid, model, price))
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /createdvehicle [dealershipid] [modelid] [price]");
+
+		if(IsValidDealership(dealershipid) == 0)
+			return SendClientMessage(playerid, COLOR_NEUTRAL, "Invalid dealership ID!");
+
+		if(IsNumeric(model))
+			modelid = strval(model);
+		else
+			modelid = GetVehicleModelIDFromName(model);
+
+		if(modelid < 400 || modelid > 611)
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Invalid vehicle model!");
+
+		GetPlayerPos(playerid, X, Y, Z);
+		GetPlayerFacingAngle(playerid, angle);
+
+		for(new i = 1; i < MAX_VEHICLES; i++)
+		{
+			if(Vehicle[i][vStatus] == 0)
+			{
+				Vehicle[i][vStatus] = 1;
+				Vehicle[i][vModel] = modelid;
+				Vehicle[i][vPosition][0] = X;
+				Vehicle[i][vPosition][1] = Y;
+				Vehicle[i][vPosition][2] = Z;
+				Vehicle[i][vAngle] = angle;
+				Vehicle[i][vPrice] = price;
+				valstr(Vehicle[i][vOwner], 0);
+				Vehicle[i][vInterior] = GetPlayerInterior(playerid);
+				Vehicle[i][vVirtualWorld] = GetPlayerVirtualWorld(playerid);
+				valstr(Vehicle[i][vCarPlate], 0);
+
+				UpdateVehicle(i, 0);
+				SaveVehicle(i);
+
+				format(string, sizeof(string), "Created vehicle %d for dealership %d", i, dealershipid);
+				SendClientMessage(playerid, COLOR_PINK, string);
+
+				vehicles++;
+
+				gettime(hour, minute, second);
+				getdate(year, month, day);
+
+				format(acmdlogstring, sizeof(acmdlogstring), "Command: /addvehicle %d %s %d [%d/%d/%d] [%d:%d:%d]", dealershipid, model, price, day, month, year, hour, minute, second);
+				AdminCommandLog(playerid, acmdlogstring);
+				return 1;
+			}
+		}
+	}
+	else
+		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
+	return 1;
+}
+
+CMD:ddv(playerid, params[])
+	return cmd_deletedvehicle(playerid, params);
+
+CMD:deletedvehicle(playerid, params[]) // Deletes a delership vehicle
+{
+	new vid, string[128], day, month, year, hour, minute, second, acmdlogstring[128];
+
+	if(Player[playerid][pAdminLevel] == 6 || IsPlayerAdmin(playerid))
+	{
+		if(sscanf(params, "i", vid))
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /deletedvehicle [vehicleid]");
+
+		if(Vehicle[vid][vStatus] == 1 && IsValidDealershipVehicle(vid) == 1)
+		{
+			DestroyVehicle(vid);
+			Delete3DTextLabel(VehicleLabel[vid]);
+			Vehicle[vid][vStatus] = 0;	
+		}
+		else
+			return SendClientMessage(playerid, COLOR_NEUTRAL, "Vehicle does not exist.");
+
+		SaveVehicle(vid);
+		
+		format(string, sizeof(string), "Deleted dealership vehicle %d", vid);
+		SendClientMessage(playerid, COLOR_PINK, string);
+
+		gettime(hour, minute, second);
+		getdate(year, month, day);
+
+		format(acmdlogstring, sizeof(acmdlogstring), "Command: /deletedvehicle %d [%d/%d/%d] [%d:%d:%d]", vid, day, month, year, hour, minute, second);
+		AdminCommandLog(playerid, acmdlogstring);
+	}
+	else
+		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
+	return 1;
+}
+
+CMD:ccv(playerid, params[])
+	return cmd_createcvehicle(playerid, params);
+
+CMD:createcvehicle(playerid, params[]) // Creates a civilian vehicle
+{
+	new model[64], modelid, Float:X, Float:Y, Float:Z, Float:angle, string[128], day, month, year, hour, minute, second, acmdlogstring[128];
+
+	if(Player[playerid][pAdminLevel] == 6 || IsPlayerAdmin(playerid))
+	{
+		if(sscanf(params, "s[64]", model))
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /createcvehicle [modelid/name]");
+
+		if(IsNumeric(model))
+			modelid = strval(model);
+		else
+			modelid = GetVehicleModelIDFromName(model);
+
+		if(modelid < 400 || modelid > 611)
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Invalid vehicle model!");
+
+		GetPlayerPos(playerid, X, Y, Z);
+		GetPlayerFacingAngle(playerid, angle);
+
+		for(new i = 1; i < MAX_VEHICLES; i++)
+		{
+			if(Vehicle[i][vStatus] == 0)
+			{
+				Vehicle[i][vStatus] = 1;
+				Vehicle[i][vModel] = modelid;
+				Vehicle[i][vPosition][0] = X;
+				Vehicle[i][vPosition][1] = Y;
+				Vehicle[i][vPosition][2] = Z;
+				Vehicle[i][vAngle] = angle;
+				Vehicle[i][vPrice] = 0;
+				valstr(Vehicle[i][vOwner], 0);
+				Vehicle[i][vInterior] = GetPlayerInterior(playerid);
+				Vehicle[i][vVirtualWorld] = GetPlayerVirtualWorld(playerid);
+				valstr(Vehicle[i][vCarPlate], 0);
+
+				UpdateVehicle(i, 0);
+				SaveVehicle(i);
+
+				format(string, sizeof(string), "Created civilian vehicle %d", i);
+				SendClientMessage(playerid, COLOR_PINK, string);
+
+				vehicles++;
+
+				gettime(hour, minute, second);
+				getdate(year, month, day);
+
+				format(acmdlogstring, sizeof(acmdlogstring), "Command: /createcvehicle %d %s %d [%d/%d/%d] [%d:%d:%d]", i, model, day, month, year, hour, minute, second);
+				AdminCommandLog(playerid, acmdlogstring);
+				return 1;
+			}
+		}
+	}
+	else
+		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
+	return 1;
+}
+
+CMD:dcv(playerid, params[])
+	return cmd_deletecvehicle(playerid, params);
+
+CMD:deletecvehicle(playerid, params[]) // Deletes a civilian vehicle
+{
+	new vid, day, month, year, hour, minute, second, acmdlogstring[128], string[128];
+
+	if(Player[playerid][pAdminLevel] == 6 || IsPlayerAdmin(playerid))
+	{
+		if(sscanf(params, "i", vid))
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax: /deletecvehicle [vehicleid]");
+
+		if(Vehicle[vid][vStatus] == 1 && IsValidCivilianVehicle(vid) == 1)
+		{
+			DestroyVehicle(vid);
+			Vehicle[vid][vStatus] = 0;	
+		}
+		else
+			return SendClientMessage(playerid, COLOR_NEUTRAL, "Vehicle does not exist.");
+
+		SaveVehicle(vid);
+		
+		format(string, sizeof(string), "Deleted civilian vehicle %d", vid);
+		SendClientMessage(playerid, COLOR_PINK, string);
+
+		gettime(hour, minute, second);
+		getdate(year, month, day);
+
+		format(acmdlogstring, sizeof(acmdlogstring), "Command: /deletecvehicle %d [%d/%d/%d] [%d:%d:%d]", vid, day, month, year, hour, minute, second);
 		AdminCommandLog(playerid, acmdlogstring);
 	}
 	else
@@ -2255,10 +2936,10 @@ CMD:sethp(playerid, params[]) // Sets a player's health to a specific value
 			gettime(hour, minute, second);
 			getdate(year, month, day);
 
-			format(string, sizeof(string), "Admin %s has set your hp to %d.", GetName(playerid), hp);
+			format(string, sizeof(string), "Admin %s has set your HP to %d.", GetName(playerid), hp);
 			SendClientMessage(targetid, COLOR_MEDIUMBLUE, string);
 
-			format(string, sizeof(string), "You have set %s's hp to %d.", GetName(targetid), hp);
+			format(string, sizeof(string), "You have set %s's HP to %d.", GetName(targetid), hp);
 			SendClientMessage(playerid, COLOR_MEDIUMBLUE, string);
 
 			format(acmdlogstring, sizeof(acmdlogstring), "Command: /sethp %s %d [%d/%d/%d] [%d:%d:%d]", GetName(targetid), hp, day, month, year, hour, minute, second);
@@ -2319,6 +3000,18 @@ CMD:jetpack(playerid, params[]) // Gives a jetpack to the player
 	return 1;
 }
 
+// ------------------------------------------------------------------------------------------------
+CMD:ahelp(playerid, params[]) // Displays a list of commands with levels that can be used by the admins 
+{
+	if(Player[playerid][pAdminLevel] >= 1 || IsPlayerAdmin(playerid))
+	{
+		ShowPlayerDialog(playerid, DIALOG_AHELP, DIALOG_STYLE_MSGBOX, "Admin Commands", "Level 1\n\n/mute    /unmute    /kick    /warn    /unwarn    /reports    /ar (/acceptreport)    /a    /up    /slap    /fly    /pm    /ahelp\n\nLevel2\n\n/ban    /banacip    /banip    /unban    /unbanip    /freeze    /unfreeze    /rtv (/respawnthisvehicle)    /rav (/respawnallvehicles)", "Okay", "");
+	}
+	else
+		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
+	return 1;
+}
+
 // ---------------------------------------Player Commands------------------------------------------
 CMD:report(playerid, params[]) // Sends a report to admins
 {
@@ -2357,5 +3050,121 @@ CMD:admins(playerid, params[]) // Displays a list of online admins with levels
 			}
 		}
 	}
+	return 1;
+}
+
+// ------------------------------------------------------------------------------------------------
+CMD:engine(playerid, params[]) // Starts and stops the engine of a vehicle
+{
+	new engine, lights, alarm, doors, bonnet, boot, objective, string[256];
+	new vid = GetPlayerVehicleID(playerid);
+
+	if(IsBicycle(vid))
+		return SendClientMessage(playerid, COLOR_NEUTRAL, "Your vehicle does not have an engine.");
+
+	if(GetPlayerState(playerid) != PLAYER_STATE_DRIVER)
+		return SendClientMessage(playerid, COLOR_NEUTRAL, "You are not driving a vehicle.");
+
+	GetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
+
+	if(engine == 1)
+	{
+		engine = 0;
+		format(string, sizeof(string), "%s stops the engine of a %s.", GetName(playerid), GetVehicleName(vid));
+		RangeSend(30.0, playerid, string, COLOR_PINK);
+	}
+	else
+	{
+		engine = 1;
+		format(string, sizeof(string), "%s starts the engine of a %s.", GetName(playerid), GetVehicleName(vid));
+		RangeSend(30.0, playerid, string, COLOR_PINK);
+	}
+
+	SetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
+	return 1;
+}
+
+CMD:eject(playerid, params[]) // Ejects a player out of the vehicle
+{
+	new targetid, string[128];
+
+	if(sscanf(params, "u", targetid))
+		return SendClientMessage(playerid, COLOR_LIGHTCYAN, "USAGE: /eject [playerid]");
+
+	new vid = GetPlayerVehicleID(playerid);
+
+	if(IsBicycle(vid))
+		return SendClientMessage(playerid, COLOR_NEUTRAL, "Your vehicle does not have any passengers.");
+
+	if(GetPlayerState(playerid) != PLAYER_STATE_DRIVER)
+		return SendClientMessage(playerid, COLOR_NEUTRAL, "You are not driving a vehicle.");
+
+	if(IsPlayerConnected(targetid))
+	{
+		if(!IsPlayerInVehicle(playerid, vid))
+			return SendClientMessage(playerid, COLOR_NEUTRAL, "The player is not in your vehicle.");
+
+		RemovePlayerFromVehicle(targetid);
+		format(string, sizeof(string), "Vehicle driver %s has thrown %s out of the vehicle.", GetName(playerid), GetName(targetid));
+
+		for(new i = 0; i < MAX_PLAYERS; i++)
+		{
+			if((IsPlayerInVehicle(i, vid)) && (GetPlayerState(i) != PLAYER_STATE_DRIVER))
+			{
+				SendClientMessage(i, COLOR_SEAGREEN, string);
+			}
+		}
+
+		format(string, sizeof(string), "Vehicle driver %s has thrown you out of the vehicle.", GetName(playerid));
+		SendClientMessage(targetid, COLOR_SEAGREEN, string);
+
+		format(string, sizeof(string), "You have thrown %s out of the vehicle.", GetName(targetid));
+		SendClientMessage(playerid, COLOR_SEAGREEN, string);
+	}
+	return 1;
+}
+
+CMD:ejectall(playerid, params[]) // Ejects all players out of the vehicle
+{
+	new string[128];
+	new vid = GetPlayerVehicleID(playerid);
+
+	if(IsBicycle(vid))
+		return SendClientMessage(playerid, COLOR_NEUTRAL, "Your vehicle does not have any passengers.");
+
+	if(GetPlayerState(playerid) != PLAYER_STATE_DRIVER)
+		return SendClientMessage(playerid, COLOR_NEUTRAL, "You are not driving a vehicle.");
+
+	for(new i = 0; i < MAX_PLAYERS; i++)
+	{
+		if(IsPlayerInVehicle(i, vid) && i != playerid)
+		{
+			RemovePlayerFromVehicle(i);
+			format(string, sizeof(string), "Vehicle driver %s has thrown you out of the vehicle.", GetName(playerid));
+			SendClientMessage(i, COLOR_SEAGREEN, string);
+		}
+	}
+	return 1;
+}
+
+CMD:lights(playerid, params[]) // Turns the lights of a vehicle on or off
+{
+	new engine, lights, alarm, doors, bonnet, boot, objective;
+	new vid = GetPlayerVehicleID(playerid);
+
+	if(IsBicycle(vid))
+		return SendClientMessage(playerid, COLOR_NEUTRAL, "Your vehicle does not have any passengers.");
+
+	if(GetPlayerState(playerid) != PLAYER_STATE_DRIVER)
+		return SendClientMessage(playerid, COLOR_NEUTRAL, "You are not driving a vehicle.");
+
+	GetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
+
+	if(lights == 1)
+		lights = 0;
+	else
+		lights = 1;
+
+	SetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
 	return 1;
 }
