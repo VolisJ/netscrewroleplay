@@ -43,6 +43,10 @@
 // ---------------------------------Global Variable Declarations------------------------------
 new accountstimer[MAX_PLAYERS];
 new mutetimer[MAX_PLAYERS];
+new fueltimer[MAX_PLAYERS];
+new healthtimer[MAX_PLAYERS];
+new hoursplayedtimer[MAX_PLAYERS];
+new paydaytimer[MAX_PLAYERS];
 
 new gobackstatus[MAX_PLAYERS];
 new Float:savedposx[MAX_PLAYERS];
@@ -54,7 +58,11 @@ new Float:DealershipPosition[MAX_DEALERSHIPS][3];
 new DealershipPickup[MAX_DEALERSHIPS];
 new Text3D:VehicleLabel[MAX_VEHICLES];
 
+new PlayerText:VehicleMeter[MAX_PLAYERS];
+
 new vehicles;
+
+new IsLoggedIn[MAX_PLAYERS];
 
 new VehicleNames[][] = {
 	"Landstalker","Bravura","Buffalo","Linerunner","Perennial","Sentinel","Dumper","Firetruck","Trashmaster","Stretch","Manana","Infernus",
@@ -93,7 +101,10 @@ enum PlayerData
 	pWarns,
 	pRegCheck,
 	pBanTime,
-	pBanExp
+	pBanExp,
+	Float:pHoursPlayed,
+	pRespectPoints,
+	pLevel
 }
 new Player[MAX_PLAYERS][PlayerData];
 
@@ -111,7 +122,8 @@ enum VehicleData
 	vVirtualWorld,
 	vCarPlate,
 	vMods[14],
-	vPaintjob
+	vPaintjob,
+	Float:vFuel
 }
 new Vehicle[MAX_VEHICLES][VehicleData];
 
@@ -122,13 +134,16 @@ enum dialogs
 	DIALOG_REGISTER_2,
 	DIALOG_REGISTER_3,
 
-	DIALOG_AHELP
+	DIALOG_AHELP,
+
+	DIALOG_BUY_LEVEL,
+
+	DIALOG_BUY_VEHICLE
 }
 
 native WP_Hash(buffer[], len, const str[]);
 
 // ------------------------------------------Forwards-----------------------------------------
-forward LoadAccounts(playerid);
 forward CheckAccountExist(playerid);
 forward OnAccountRegister(playerid);
 forward SaveAccount(playerid);
@@ -176,6 +191,18 @@ forward SaveVehicle(vehicleid);
 forward LoadVehicles();
 forward IsValidCivilianVehicle(vehicleid);
 
+// forward DecreaseFuel(playerid, vehicleid);
+forward DecreaseFuel(playerid);
+forward ToggleEngine(vehicleid, toggle);
+
+forward DecreaseHealth(playerid);
+forward IncreaseHoursPlayed(playerid);
+forward Payday(playerid);
+forward BuyLevel(playerid);
+
+forward LoadObjects();
+forward RemoveObjects(playerid);
+
 main() {}
 
 // ------------------------------------Built - In Functions------------------------------------
@@ -190,6 +217,7 @@ public OnGameModeInit()
 
 	LoadDealerships();
 	LoadVehicles();
+	LoadObjects();
 
 	for(new i = 0; i < MAX_DEALERSHIPS; i++)
 	{
@@ -208,9 +236,21 @@ public OnPlayerConnect(playerid)
 {
 	TogglePlayerSpectating(playerid, 1);
 	CheckAccountExist(playerid);
-	// SafeResetPlayerMoney(playerid);
 
-	accountstimer[playerid] = SetTimerEx("SaveAccount", 60000, 1, "i", playerid);
+	hoursplayedtimer[playerid] = SetTimerEx("IncreaseHoursPlayed", 6000, 1, "i", playerid);
+	healthtimer[playerid] = SetTimerEx("DecreaseHealth", 3000, 1, "i", playerid);
+	paydaytimer[playerid] = SetTimerEx("Payday", 1000, 1, "i", playerid);
+	// accountstimer[playerid] = SetTimerEx("SaveAccount", 60000, 1, "i", playerid);
+
+	VehicleMeter[playerid] = CreatePlayerTextDraw(playerid, 498.000000, 140.000000, " ");
+	PlayerTextDrawBackgroundColor(playerid, VehicleMeter[playerid], 255);
+	PlayerTextDrawFont(playerid, VehicleMeter[playerid], 1);
+	PlayerTextDrawLetterSize(playerid, VehicleMeter[playerid], 0.389999, 1.299999);
+	PlayerTextDrawColor(playerid, VehicleMeter[playerid], 0xFFFFFFFF);
+	PlayerTextDrawSetOutline(playerid, VehicleMeter[playerid], 1);
+	PlayerTextDrawSetProportional(playerid, VehicleMeter[playerid], 1);
+
+	RemoveObjects(playerid);
 	
 	return 1;
 }
@@ -284,6 +324,14 @@ public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
 			else
 				return Kick(playerid);
 		}
+
+		case DIALOG_BUY_LEVEL:
+		{
+			if(response)
+			{
+				BuyLevel(playerid);
+			}
+		}
 	}
 	return 1;
 }
@@ -297,8 +345,10 @@ public OnPlayerRequestClass(playerid, classid)
 
 public OnPlayerDisconnect(playerid, reason)
 {
-	KillTimer(accountstimer[playerid]);
+	// KillTimer(accountstimer[playerid]);
+	KillTimer(healthtimer[playerid]);
 	KillTimer(mutetimer[playerid]);
+	PlayerTextDrawDestroy(playerid, VehicleMeter[playerid]);
 	SaveAccount(playerid);
 	return 1;
 }
@@ -315,7 +365,7 @@ public OnPlayerText(playerid, text[])
 
 	if(Player[playerid][pIsMuted] == 1)
 	{
-		SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You cannot say anything because you are muted by the admins!");
+		SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You cannot say anything because you are muted by the admins.");
 		return 0;
 	}
 
@@ -371,9 +421,14 @@ public OnPlayerKeyStateChange(playerid, newkeys, oldkeys)
 			}
 			else
 			{
-				engine = 1;
-				format(string, sizeof(string), "%s starts the engine of a %s.", GetName(playerid), GetVehicleName(vid));
-				RangeSend(30.0, playerid, string, COLOR_PINK);
+				if(Vehicle[vid][vFuel] > 0)
+				{
+					engine = 1;
+					format(string, sizeof(string), "%s starts the engine of a %s.", GetName(playerid), GetVehicleName(vid));
+					RangeSend(30.0, playerid, string, COLOR_PINK);
+				}
+				else
+					SendClientMessage(playerid, COLOR_LIGHTCYAN, "Your vehicle is out of fuel.");
 			}
 
 			SetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
@@ -400,6 +455,36 @@ public OnPlayerKeyStateChange(playerid, newkeys, oldkeys)
 	return 1;
 }
 
+public OnPlayerStateChange(playerid, newstate, oldstate)
+{
+	new vid = GetPlayerVehicleID(playerid);
+	if(newstate == PLAYER_STATE_DRIVER)
+	{
+		KillTimer(fueltimer[playerid]);
+		PlayerTextDrawShow(playerid, VehicleMeter[playerid]);
+		fueltimer[playerid] = SetTimerEx("DecreaseFuel", 1000, 1, "ii", playerid, vid);
+	}
+	else
+	{
+		PlayerTextDrawHide(playerid, VehicleMeter[playerid]);
+		KillTimer(fueltimer[playerid]);
+	}
+	return 1;
+}
+
+public OnPlayerEnterVehicle(playerid, vehicleid, ispassenger)
+{
+
+	KillTimer(fueltimer[playerid]);
+	return 1;
+}
+
+public OnPlayerExitVehicle(playerid, vehicleid)
+{
+	KillTimer(fueltimer[playerid]);
+	return 1;
+}
+
 // -----------------------------------User Defined Functions-------------------------------------
 stock GetName(playerid) // Returns the name of a player according to the player id
 {
@@ -419,7 +504,7 @@ stock IsNumeric(const string[]) // Checks if the parameter is numeric
 	return 1;
 }
 
-stock GetVehicleModelIDFromName(const vname[]) // Returns vehicle's mode id from vehicle name
+stock GetVehicleModelIDFromName(const vname[]) // Returns vehicle's model id from vehicle name
 {
 	for(new x=0; x < sizeof(VehicleNames); x++)
 	{
@@ -483,6 +568,7 @@ public OnAccountRegister(playerid) // Assigns the information to the player vari
 	new registerstring[256];
 
 	SafeGivePlayerMoney(playerid, 300);
+	SetPlayerScore(playerid, 1);
 	Player[playerid][pCash] = 300;
 	Player[playerid][pAdminLevel] = 0;
 	Player[playerid][pVipLevel] = 0;
@@ -494,6 +580,8 @@ public OnAccountRegister(playerid) // Assigns the information to the player vari
 	Player[playerid][pRegCheck] = 1;
 	Player[playerid][pBanTime] = 0;
 	Player[playerid][pBanExp] = 0;
+	Player[playerid][pHoursPlayed] = 0;
+	Player[playerid][pLevel] = 1;
 
 	new hour, minute, second;
 	new year, month, day;
@@ -509,6 +597,8 @@ public OnAccountRegister(playerid) // Assigns the information to the player vari
 	SetSpawnInfo(playerid, 0, Player[playerid][pSkin], Spawn_X, Spawn_Y, Spawn_Z, 180, -1, -1, -1, -1, -1, -1);
 	SpawnPlayer(playerid);
 
+	IsLoggedIn[playerid] = 1;
+
 	SaveAccount(playerid);
 	SendClientMessage(playerid, COLOR_GREEN, "You have successfully registered!");
 	return 1;
@@ -516,58 +606,70 @@ public OnAccountRegister(playerid) // Assigns the information to the player vari
 
 public SaveAccount(playerid) // Saves the information to the .ini file
 {
-	new filename[64], line[256];
+	if(IsPlayerConnected(playerid) && IsLoggedIn[playerid] == 1)
+	{
+		new filename[64], line[256];
 
-	format(filename, sizeof(filename), ACCOUNT_PATH "%s.ini", GetName(playerid));
+		format(filename, sizeof(filename), ACCOUNT_PATH "%s.ini", GetName(playerid));
 
-	new File:handle = fopen(filename, io_write);
+		new File:handle = fopen(filename, io_write);
 
-	format(line, sizeof(line), "Email=%s\r\n", Player[playerid][pEmail]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "Email=%s\r\n", Player[playerid][pEmail]);
+		fwrite(handle, line);
 
-	format(line, sizeof(line), "Password=%s\r\n", Player[playerid][pPassword]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "Password=%s\r\n", Player[playerid][pPassword]);
+		fwrite(handle, line);
 
-	format(line, sizeof(line), "Sex=%d\r\n", Player[playerid][pSex]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "Sex=%d\r\n", Player[playerid][pSex]);
+		fwrite(handle, line);
 
-	format(line, sizeof(line), "Skin=%d\r\n", Player[playerid][pSkin]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "Skin=%d\r\n", Player[playerid][pSkin]);
+		fwrite(handle, line);
 
-	format(line, sizeof(line), "Cash=%d\r\n", Player[playerid][pCash]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "Cash=%d\r\n", Player[playerid][pCash]);
+		fwrite(handle, line);
 
-	format(line, sizeof(line), "AdminLevel=%d\r\n", Player[playerid][pAdminLevel]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "AdminLevel=%d\r\n", Player[playerid][pAdminLevel]);
+		fwrite(handle, line);
 
-	format(line, sizeof(line), "VipLevel=%d\r\n", Player[playerid][pVipLevel]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "VipLevel=%d\r\n", Player[playerid][pVipLevel]);
+		fwrite(handle, line);
 
-	format(line, sizeof(line), "HelperLevel=%d\r\n", Player[playerid][pHelperLevel]);
-	fwrite(handle, line);
-	
-	format(line, sizeof(line), "IsBanned=%d\r\n", Player[playerid][pIsBanned]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "HelperLevel=%d\r\n", Player[playerid][pHelperLevel]);
+		fwrite(handle, line);
+		
+		format(line, sizeof(line), "IsBanned=%d\r\n", Player[playerid][pIsBanned]);
+		fwrite(handle, line);
 
-	format(line, sizeof(line), "IsMuted=%d\r\n", Player[playerid][pIsMuted]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "IsMuted=%d\r\n", Player[playerid][pIsMuted]);
+		fwrite(handle, line);
 
-	format(line, sizeof(line), "MuteTime=%d\r\n", Player[playerid][pMuteTime]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "MuteTime=%d\r\n", Player[playerid][pMuteTime]);
+		fwrite(handle, line);
 
-	format(line, sizeof(line), "Warns=%d\r\n", Player[playerid][pWarns]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "Warns=%d\r\n", Player[playerid][pWarns]);
+		fwrite(handle, line);
 
-	format(line, sizeof(line), "RegCheck=%d\r\n", Player[playerid][pRegCheck]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "RegCheck=%d\r\n", Player[playerid][pRegCheck]);
+		fwrite(handle, line);
 
-	format(line, sizeof(line), "BanTime=%d\r\n", Player[playerid][pBanTime]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "BanTime=%d\r\n", Player[playerid][pBanTime]);
+		fwrite(handle, line);
 
-	format(line, sizeof(line), "BanExp=%d\r\n", Player[playerid][pBanExp]);
-	fwrite(handle, line);
+		format(line, sizeof(line), "BanExp=%d\r\n", Player[playerid][pBanExp]);
+		fwrite(handle, line);
 
-	fclose(handle);
+		format(line, sizeof(line), "HoursPlayed=%.1f\r\n", Player[playerid][pHoursPlayed]);
+		fwrite(handle, line);
+
+		format(line, sizeof(line), "Level=%d\r\n", Player[playerid][pLevel]);
+		fwrite(handle, line);
+
+		format(line, sizeof(line), "RespectPoints=%d\r\n", Player[playerid][pRespectPoints]);
+		fwrite(handle, line);
+
+		fclose(handle);
+	}
 	return 1;
 }
 
@@ -621,12 +723,19 @@ public OnAccountLoad(playerid) // Loads player data from the .ini file to the pl
 			Player[playerid][pBanTime] = strval(line[s]);
 		else if(strcmp(key, "BanExp") == 0)
 			Player[playerid][pBanExp] = strval(line[s]);
+		else if(strcmp(key, "HoursPlayed") == 0)
+			sscanf(line[s], "f", Player[playerid][pHoursPlayed]);
+		else if(strcmp(key, "Level") == 0)
+			Player[playerid][pLevel] = strval(line[s]);
+		else if(strcmp(key, "RespectPoints") == 0)
+			Player[playerid][pRespectPoints] = strval(line[s]);
 	}
 	fclose(handle);
 
 	BanCheck(playerid);
 
 	SafeSetPlayerMoney(playerid, Player[playerid][pCash]);
+	SetPlayerScore(playerid, Player[playerid][pLevel]);
 
 	TogglePlayerSpectating(playerid, 0);
 
@@ -634,6 +743,8 @@ public OnAccountLoad(playerid) // Loads player data from the .ini file to the pl
 	SpawnPlayer(playerid);
 
 	SendClientMessage(playerid, COLOR_GREEN, "You have successfully logged in.");
+
+	IsLoggedIn[playerid] = 1;
 
 	if(Player[playerid][pIsMuted] == 1)
 		mutetimer[playerid] = SetTimerEx("DecMuteTime", 1000, 1, "i", playerid);
@@ -645,8 +756,6 @@ public DecMuteTime(playerid) // Decreases mute time of player by 1 second
 {
 	new day, month, year, hour, minute, second, mutestring[128];
 	Player[playerid][pMuteTime]--;
-
-	printf("%d", Player[playerid][pMuteTime]);
 
 	if(Player[playerid][pMuteTime] == 0)
 	{
@@ -944,6 +1053,9 @@ public SaveVehicle(vehicleid) // Saves vehicle data to .ini file
 	format(line, sizeof(line), "Paintjob=%d\r\n", Vehicle[vehicleid][vPaintjob]);
 	fwrite(handle, line);
 
+	format(line, sizeof(line), "Fuel=%f\r\n", Vehicle[vehicleid][vFuel]);
+	fwrite(handle, line);
+
 	for(new m = 0; m < 14; m++)
 	{
 		format(line, sizeof(line), "Mod%d=%d\r\n", Vehicle[vehicleid][vMods][m]);
@@ -996,6 +1108,8 @@ public LoadVehicles() // Loads vehicle data from .ini file
 				sscanf(line[s], "s[128]", Vehicle[i][vOwner]);
 			else if(strcmp(key, "vCarPlate") == 0)
 				sscanf(line[s], "s[128]", Vehicle[i][vCarPlate]);
+			else if(strcmp(key, "Fuel") == 0)
+				sscanf(line[s], "f", Vehicle[i][vFuel]);
 		}
 		fclose(handle);
 		if(Vehicle[i][vStatus] == 1)
@@ -1003,6 +1117,273 @@ public LoadVehicles() // Loads vehicle data from .ini file
 	}
 	printf("  Loaded %d vehicles", count);
 	vehicles = count;
+}
+
+public DecreaseFuel(playerid) // Decreases fuel by 0.035
+{
+	new engine, lights, alarm, doors, bonnet, boot, objective, string[128];
+
+	if(GetPlayerState(playerid) == PLAYER_STATE_DRIVER || GetPlayerState(playerid) == PLAYER_STATE_PASSENGER)
+	{
+		new vehicleid = GetPlayerVehicleID(playerid);
+
+		GetVehicleParamsEx(vehicleid, engine, lights, alarm, doors, bonnet, boot, objective);
+
+		if(IsBicycle(vehicleid) == 0 && IsValidDealershipVehicle(vehicleid) == 0 && engine == 1)
+		{
+			if(Vehicle[vehicleid][vFuel] <= 0)
+			{
+				ToggleEngine(vehicleid, VEHICLE_PARAMS_OFF);
+				SendClientMessage(playerid, COLOR_INDIGO, "Your vehicle is out of fuel.");
+				KillTimer(fueltimer[playerid]);
+			}
+
+			format(string, sizeof(string), "Fuel: %d%%", floatround(Vehicle[vehicleid][vFuel]));
+			PlayerTextDrawSetString(playerid, VehicleMeter[playerid], string);
+			Vehicle[vehicleid][vFuel] -= 0.035;
+		}
+	}
+	return 1;
+}
+
+public ToggleEngine(vehicleid, toggle) // Toggles engine on or off
+{
+	new engine, lights, alarm, doors, bonnet, boot, objective;
+	GetVehicleParamsEx(vehicleid, engine, lights, alarm, doors, bonnet, boot, objective);
+	SetVehicleParamsEx(vehicleid, toggle, lights, alarm, doors, bonnet, boot, objective);
+	return 1;
+}
+
+public DecreaseHealth(playerid) // Decreases player health by 1
+{
+	new Float:health;
+	
+	if(IsPlayerConnected(playerid) && IsLoggedIn[playerid] == 1)
+	{
+		GetPlayerHealth(playerid, health);
+		SetPlayerHealth(playerid, health - 1);
+	}
+	return 1;
+}
+
+public IncreaseHoursPlayed(playerid)
+{
+	Player[playerid][pHoursPlayed] += 0.1;
+	SaveAccount(playerid);
+	return 1;
+}
+
+public Payday(playerid)
+{
+	new hour, minute, second, paycheck, string[256], bonus, tax;
+	gettime(hour, minute, second);
+
+	if(minute == 0 && second == 0)
+	{
+		paycheck = GetPlayerScore(playerid) * 25;
+		bonus = Player[playerid][pVipLevel] * 5;
+		tax = GetPlayerScore(playerid) * 1;
+
+		GameTextForPlayer(playerid, "PayDay", 1500, 1);
+
+		SendClientMessage(playerid, COLOR_WHITE, "__________PAYDAY PAYCHECK__________");
+		format(string, sizeof(string), "Paycheck: $%d Bonus: $%d Tax: -$%d", paycheck, bonus, tax);
+		SendClientMessage(playerid, COLOR_WHITE, string);
+
+		SafeGivePlayerMoney(playerid, (paycheck + bonus) - tax);
+
+		Player[playerid][pRespectPoints]++;
+		SaveAccount(playerid);
+
+		if(Player[playerid][pRespectPoints] == (GetPlayerScore(playerid) * 4) - 2)
+		{
+			SendClientMessage(playerid, COLOR_KHAKI, "You have obtained enough respect points to buy the next level.");
+			SendClientMessage(playerid, COLOR_KHAKI, "Use /buylevel to buy the next level.");
+		}
+	}
+}
+
+public BuyLevel(playerid)
+{
+	new string[128];
+	new totalneeded = (GetPlayerScore(playerid) * 4) - 2;
+	new nextlevel = GetPlayerScore(playerid) * 250;
+
+	if(Player[playerid][pVipLevel] > 0)
+		Player[playerid][pRespectPoints] = Player[playerid][pRespectPoints] - totalneeded;
+	else
+		Player[playerid][pRespectPoints] = 0;
+
+	Player[playerid][pLevel]++;
+	SafeGivePlayerMoney(playerid, -nextlevel);
+	SaveAccount(playerid);
+
+	SetPlayerScore(playerid, Player[playerid][pLevel]);
+	format(string, sizeof(string), "Congratulations, you are now level %d.", Player[playerid][pLevel]);
+	SendClientMessage(playerid, COLOR_PINK, string);
+	return 1;
+}
+
+public LoadObjects()
+{
+	CreateObject(984, 1106.66589, -1757.76599, 13.19675,   0.00000, 0.00000, 0.00000);
+	CreateObject(984, 1106.68506, -1775.36682, 13.18836,   0.00000, 0.00000, 0.00000);
+	CreateObject(984, 1054.06287, -1797.92993, 13.41897,   0.00000, 0.00000, 0.30301);
+	CreateObject(984, 1060.48767, -1804.33850, 13.31967,   0.24000, -0.66000, 90.29993);
+	CreateObject(984, 1078.02820, -1804.26099, 13.26337,   0.24000, -0.66000, 90.29993);
+	CreateObject(984, 1100.40820, -1730.86157, 13.44559,   0.00000, 0.00000, 90.06003);
+	CreateObject(984, 1060.42139, -1730.97778, 13.44559,   0.00000, 0.00000, 90.46606);
+	CreateObject(984, 1074.81982, -1730.88879, 13.44559,   0.00000, 0.00000, 90.06003);
+	CreateObject(984, 1087.63110, -1730.87769, 13.44559,   0.00000, 0.00000, 90.06003);
+	CreateObject(984, 1087.63110, -1730.87769, 13.44559,   0.00000, 0.00000, 90.06003);
+	CreateObject(647, 1115.87085, -1776.95850, 13.97656,   356.85840, 0.00000, -0.10463);
+	CreateObject(647, 1109.56116, -1777.57495, 13.97656,   356.85840, 0.00000, -0.10463);
+	CreateObject(984, 1106.66150, -1762.56409, 13.18836,   0.00000, 0.00000, 0.00000);
+	CreateObject(984, 1062.01306, -1730.97021, 13.44559,   0.00000, 0.00000, 90.46606);
+	CreateObject(984, 1054.02734, -1737.43018, 13.41897,   0.00000, 0.00000, 0.00000);
+	CreateObject(984, 1054.01306, -1750.22668, 13.41897,   0.00000, 0.00000, 0.00000);
+	CreateObject(984, 1054.00940, -1763.02649, 13.41897,   0.00000, 0.00000, 0.00000);
+	CreateObject(984, 1054.00061, -1775.81543, 13.41897,   0.00000, 0.00000, 0.00000);
+	CreateObject(984, 1054.01770, -1788.60730, 13.41897,   0.00000, 0.00000, 0.30301);
+	CreateObject(984, 1065.23022, -1804.32007, 13.31967,   0.24000, -0.66000, 90.29993);
+	CreateObject(1290, 1101.95923, -1777.39624, 18.57813,   356.85840, 0.00000, 3.14159);
+	CreateObject(1290, 1058.68689, -1756.64636, 18.57813,   356.85840, 0.00000, 3.14159);
+	CreateObject(1290, 1101.93628, -1735.52417, 18.57813,   356.85840, 0.00000, 3.14159);
+	CreateObject(1290, 1059.03528, -1735.62463, 18.57813,   356.85840, 0.00000, 3.14159);
+	CreateObject(1290, 1081.92871, -1735.70447, 18.57813,   356.85840, 0.00000, 3.14159);
+	CreateObject(1290, 1059.07947, -1777.46460, 18.57813,   356.85840, 0.00000, 3.14159);
+
+	CreateObject(8168, 1615.58301, 644.86877, 11.65614,   0.00000, 0.00000, 106.55999);
+	CreateObject(1232, -2929.48022, 435.22589, 6.59930,   356.85840, 0.00000, 3.14159);
+	CreateObject(1232, -2864.85498, 417.76968, 6.59930,   356.85840, 0.00000, 3.14159);
+	CreateObject(1232, -2864.63818, 435.35443, 6.59930,   356.85840, 0.00000, 3.14159);
+	CreateObject(1232, -2926.80737, 418.13971, 6.59930,   356.85840, 0.00000, 3.14159);
+	CreateObject(8168, -2864.22925, 505.14557, 5.74485,   0.00000, 0.00000, 16.56001);
+	CreateObject(19313, -2868.21436, 486.94171, 3.87600,   0.00000, -180.00000, 0.00000);
+	CreateObject(19313, -2924.18335, 486.89532, 3.87600,   0.00000, -180.00000, 0.00000);
+	CreateObject(19313, -2910.19775, 486.90952, 3.87600,   0.00000, -180.00000, 0.00000);
+	CreateObject(19313, -2896.21655, 486.91205, 3.87600,   0.00000, -180.00000, 0.00000);
+	CreateObject(19313, -2882.19824, 486.92218, 3.87600,   0.00000, -180.00000, 0.00000);
+
+	CreateObject(3465, 603.48438, 1707.23438, 7.50950,   0.00000, 0.00000, -54.12000);
+	CreateObject(3465, 620.53131, 1682.46094, 7.50950,   0.00000, 0.00000, -54.12000);
+	CreateObject(3465, 606.90430, 1702.22705, 7.50955,   0.00000, 0.00000, -54.12000);
+	CreateObject(3465, 610.25000, 1697.26563, 7.50950,   0.00000, 0.00000, -54.12000);
+	CreateObject(3465, 613.71881, 1692.26563, 7.50950,   0.00000, 0.00000, -54.12000);
+	CreateObject(3465, 617.10425, 1687.41895, 7.50950,   0.00000, 0.00000, -54.12000);
+	CreateObject(3465, 624.04688, 1677.60156, 7.50950,   0.00000, 0.00000, -54.12000);
+	CreateObject(3465, 1378.96094, 461.03909, 20.67780,   0.00000, 0.00000, 64.92000);
+	CreateObject(3465, 1385.10864, 458.28751, 20.67780,   0.00000, 0.00000, 64.92000);
+	CreateObject(3465, 1383.39844, 459.07031, 20.67780,   0.00000, 0.00000, 64.92000);
+	CreateObject(3465, 1380.63281, 460.27341, 20.67780,   0.00000, 0.00000, 64.92000);
+
+	CreateObject(3465, 1007.48083, -936.35480, 42.52997,   0.00000, 0.00000, 98.10004);
+	CreateObject(3465, 1000.31641, -937.37799, 42.52997,   0.00000, 0.00000, 98.10004);
+
+	CreateObject(3465, -1611.35706, -2720.47974, 49.26486,   0.00000, 0.00000, 52.20002);
+	CreateObject(3465, -1601.36035, -2707.26489, 49.26486,   0.00000, 0.00000, 52.20002);
+	CreateObject(3465, -1607.95105, -2716.11792, 49.26486,   0.00000, 0.00000, 52.20002);
+	CreateObject(3465, -1604.58057, -2711.73999, 49.26486,   0.00000, 0.00000, 52.20002);
+	CreateObject(3465, -2241.71875, -2562.28906, 32.38170,   0.00000, 0.00000, -26.94000);
+	CreateObject(3465, -2246.71143, -2559.71191, 32.38172,   0.00000, 0.00000, -26.94002);
+	CreateObject(3465, -2026.59338, 156.74089, 29.34369,   0.00000, 0.00000, 0.00000);
+	CreateObject(3465, -1679.36633, 403.05774, 7.72122,   0.00000, 0.00000, -46.85999);
+	CreateObject(3465, -1685.96875, 409.64059, 7.72120,   0.00000, 0.00000, -46.86000);
+	CreateObject(3465, -1681.82813, 413.78131, 7.72120,   0.00000, 0.00000, -46.86000);
+	CreateObject(3465, -1676.51563, 419.11719, 7.72120,   0.00000, 0.00000, -46.86000);
+	CreateObject(3465, -1665.52344, 416.91409, 7.72120,   0.00000, 0.00000, -46.86000);
+	CreateObject(3465, -1672.13281, 423.50000, 7.72120,   0.00000, 0.00000, -46.86000);
+	CreateObject(3465, -1669.90625, 412.53131, 7.72120,   0.00000, 0.00000, -46.86000);
+	CreateObject(3465, -1675.21875, 407.19531, 7.72120,   0.00000, 0.00000, -46.86000);
+	CreateObject(1686, -2410.86230, 976.20636, 44.48438,   3.14159, 0.00000, 3.13988);
+	CreateObject(3465, -2410.80469, 981.52338, 45.81320,   0.00000, 0.00000, 0.00000);
+	CreateObject(1686, -2410.76636, 974.96179, 44.48440,   3.14160, 0.00000, 3.13990);
+	CreateObject(3465, -1464.94653, 1860.56299, 33.14404,   0.00000, 0.00000, -85.97997);
+	CreateObject(3465, -1477.65625, 1859.73438, 33.14400,   0.00000, 0.00000, -85.98000);
+	CreateObject(3465, -1465.47656, 1868.27344, 33.14400,   0.00000, 0.00000, -85.98000);
+	CreateObject(3465, -1477.85156, 1867.31250, 33.14400,   0.00000, 0.00000, -85.98000);
+	CreateObject(3465, -1329.22839, 2669.29956, 50.81291,   0.00000, 0.00000, -98.58000);
+	CreateObject(3465, -1328.58594, 2674.71094, 50.81290,   0.00000, 0.00000, -98.58000);
+	CreateObject(3465, -1327.87903, 2682.50415, 50.81290,   0.00000, 0.00000, -98.58000);
+	CreateObject(3465, -1327.79688, 2680.12500, 50.81290,   0.00000, 0.00000, -98.58000);
+
+	CreateObject(971, -99.83736, 1111.65613, 21.03730,   0.00000, 0.00000, 0.00000);
+	CreateObject(971, -1420.85474, 2591.07373, 57.13861,   0.00000, 0.00000, 0.00000);
+	CreateObject(971, -1903.98999, 277.76801, 43.33656,   0.00000, 0.00000, 0.00000);
+	CreateObject(971, -2425.03955, 1028.24268, 52.65782,   0.00000, 0.00000, 0.00000);
+	CreateObject(971, 487.72806, -1735.20532, 11.93346,   -0.42000, -0.12000, -7.97999);
+	CreateObject(971, 2071.54688, -1830.11218, 14.20679,   0.00000, 0.00000, 90.54002);
+	CreateObject(971, 1023.57233, -1029.14722, 32.46410,   0.00000, 0.00000, 0.00000);
+	CreateObject(971, 720.14825, -462.39355, 16.90990,   0.00000, 0.00000, 0.00000);
+	CreateObject(971, 2394.56641, 1483.60730, 13.18009,   0.00000, 0.00000, 0.00000);
+	return 1;
+}
+
+public RemoveObjects(playerid)
+{
+	RemoveBuildingForPlayer(playerid, 647, 1074.9766, -1800.6875, 14.3125, 0.25);
+	RemoveBuildingForPlayer(playerid, 620, 1075.3750, -1797.3594, 12.3516, 0.25);
+	RemoveBuildingForPlayer(playerid, 647, 1074.9766, -1794.5781, 14.3125, 0.25);
+	RemoveBuildingForPlayer(playerid, 647, 1107.6250, -1779.8359, 13.9766, 0.25);
+	RemoveBuildingForPlayer(playerid, 647, 1077.3672, -1750.3984, 14.3125, 0.25);
+	RemoveBuildingForPlayer(playerid, 1290, 1080.8438, -1750.1797, 18.5781, 0.25);
+	RemoveBuildingForPlayer(playerid, 647, 1083.5156, -1750.3984, 14.3125, 0.25);
+
+	RemoveBuildingForPlayer(playerid, 1232, -2916.6172, 419.7344, 6.5000, 0.25);
+	RemoveBuildingForPlayer(playerid, 1232, -2880.3828, 419.7344, 6.5000, 0.25);
+	RemoveBuildingForPlayer(playerid, 1280, -2911.4219, 422.3516, 4.2891, 0.25);
+	RemoveBuildingForPlayer(playerid, 1280, -2886.5859, 422.3516, 4.2891, 0.25);
+	RemoveBuildingForPlayer(playerid, 1232, -2916.8984, 506.8203, 6.5000, 0.25);
+	RemoveBuildingForPlayer(playerid, 1232, -2863.3438, 506.8203, 6.5000, 0.25);
+
+	RemoveBuildingForPlayer(playerid, 1686, 624.0469, 1677.6016, 6.1797, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, 603.4844, 1707.2344, 6.1797, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, 606.8984, 1702.2188, 6.1797, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, 610.2500, 1697.2656, 6.1797, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, 613.7188, 1692.2656, 6.1797, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, 617.1250, 1687.4531, 6.1797, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, 620.5313, 1682.4609, 6.1797, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, 1378.9609, 461.0391, 19.3281, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, 1380.6328, 460.2734, 19.3281, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, 1385.0781, 458.2969, 19.3281, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, 1383.3984, 459.0703, 19.3281, 0.25);
+
+	RemoveBuildingForPlayer(playerid, 1686, -1685.9688, 409.6406, 6.3828, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1679.3594, 403.0547, 6.3828, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1681.8281, 413.7813, 6.3828, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1675.2188, 407.1953, 6.3828, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1676.5156, 419.1172, 6.3828, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1669.9063, 412.5313, 6.3828, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1672.1328, 423.5000, 6.3828, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1665.5234, 416.9141, 6.3828, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -2410.8047, 970.8516, 44.4844, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -2410.8047, 976.1875, 44.4844, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -2410.8047, 981.5234, 44.4844, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1477.6563, 1859.7344, 31.8203, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1464.9375, 1860.5625, 31.8203, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1477.8516, 1867.3125, 31.8203, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1465.4766, 1868.2734, 31.8203, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1329.2031, 2669.2813, 49.4531, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1328.5859, 2674.7109, 49.4531, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1327.7969, 2680.1250, 49.4531, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1327.0313, 2685.5938, 49.4531, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1610.6172, -2721.0000, 47.9297, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1607.3047, -2716.6016, 47.9297, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1603.9922, -2712.2031, 47.9297, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -1600.6719, -2707.8047, 47.9297, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -2246.7031, -2559.7109, 31.0625, 0.25);
+	RemoveBuildingForPlayer(playerid, 1686, -2241.7188, -2562.2891, 31.0625, 0.25);
+
+	RemoveBuildingForPlayer(playerid, 5422, 2071.4766, -1831.4219, 14.5625, 0.25);
+	RemoveBuildingForPlayer(playerid, 5856, 1024.9844, -1029.3516, 33.1953, 0.25);
+	RemoveBuildingForPlayer(playerid, 6400, 488.2813, -1734.6953, 12.3906, 0.25);
+	RemoveBuildingForPlayer(playerid, 11319, -1904.5313, 277.8984, 42.9531, 0.25);
+	RemoveBuildingForPlayer(playerid, 9625, -2425.7266, 1027.9922, 52.2813, 0.25);
+	RemoveBuildingForPlayer(playerid, 8957, 2393.7656, 1483.6875, 12.7109, 0.25);
+	RemoveBuildingForPlayer(playerid, 3294, -1420.5469, 2591.1563, 57.7422, 0.25);
+	RemoveBuildingForPlayer(playerid, 3294, -100.0000, 1111.4141, 21.6406, 0.25);
+	RemoveBuildingForPlayer(playerid, 13028, 720.0156, -462.5234, 16.8594, 0.25);
+	return 1;
 }
 
 // ------------------------Safe Money Functions (Anti - Money Cheat)------------------------------
@@ -1401,7 +1782,7 @@ CMD:unmute(playerid, params[]) // Unmute a player
 
 		if(IsPlayerConnected(targetid))
 		{
-			if(Player[playerid][pIsMuted] == 0)
+			if(Player[targetid][pIsMuted] == 0)
 				return SendClientMessage(playerid, COLOR_NEUTRAL, "The player is not muted!");
 
 			Player[targetid][pIsMuted] = 0;
@@ -1676,6 +2057,7 @@ CMD:goback(playerid, params[]) // Teleports the player to the last position (whe
 		{
 			SetPlayerPos(playerid, savedposx[playerid], savedposy[playerid], savedposz[playerid]);
 			gobackstatus[playerid] = 0;
+			SendClientMessage(playerid, COLOR_SEAGREEN, "You have been teleported.");
 		}
 		else
 		{
@@ -1685,7 +2067,7 @@ CMD:goback(playerid, params[]) // Teleports the player to the last position (whe
 		format(acmdlogstring, sizeof(acmdlogstring), "Command: /goback [%d/%d/%d] [%d:%d:%d]", day, month, year, hour, minute, second);
 		AdminCommandLog(playerid, acmdlogstring);
 
-		SendClientMessage(playerid, COLOR_SEAGREEN, "You have been teleported.");
+		
 	}
 	else
 		return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "You are not authorized to use this command!");
@@ -1863,7 +2245,7 @@ CMD:unban(playerid, params[]) // Unbans an account
 {
 	new reason[128], string[128], acmdlogstring[128], banstring2[128], day, month, year, hour, minute, second, playername[MAX_PLAYER_NAME];
 
-	new tEmail[128], tPassword[129], tSex, tSkin, tCash, tAdminLevel, tVipLevel, tHelperLevel, tIsBanned, tIsMuted, tMuteTime, tWarns, tRegCheck;
+	new tEmail[128], tPassword[129], tSex, tSkin, tCash, tAdminLevel, tVipLevel, tHelperLevel, tIsBanned, tIsMuted, tMuteTime, tWarns, tRegCheck, Float:tHoursPlayed, tLevel, tRespectPoints;
 
 	new filename2[64], line2[256];
 	
@@ -1918,6 +2300,12 @@ CMD:unban(playerid, params[]) // Unbans an account
 					tWarns = strval(line[s]);
 				else if(strcmp(key, "RegCheck") == 0)
 					tRegCheck = strval(line[s]);
+				else if(strcmp(key, "HoursPlayed") == 0)
+					sscanf(line[s], "f", tHoursPlayed);
+				else if(strcmp(key, "Level") == 0)
+					tLevel = strval(line[s]);
+				else if(strcmp(key, "RespectPoints") == 0)
+					tRespectPoints = strval(line[s]);
 			}
 			fclose(handle);
 		}
@@ -1974,11 +2362,20 @@ CMD:unban(playerid, params[]) // Unbans an account
 		format(line2, sizeof(line2), "RegCheck=%d\r\n", tRegCheck);
 		fwrite(handle2, line2);
 
-		format(line2, sizeof(line2), "BanTime=%d\r\n", 0);
+		format(line2, sizeof(line2), "BanTime=0\r\n");
 		fwrite(handle2, line2);
 
-		format(line2, sizeof(line2), "BanExp=%d\r\n", 0);
+		format(line2, sizeof(line2), "BanExp=0\r\n");
 		fwrite(handle2, line2);
+
+		format(line, sizeof(line), "HoursPlayed=%.1f\r\n", tHoursPlayed);
+		fwrite(handle, line);
+
+		format(line, sizeof(line), "Level=%d\r\n", tLevel);
+		fwrite(handle, line);
+
+		format(line, sizeof(line), "RespectPoints=%d\r\n", tRespectPoints);
+		fwrite(handle, line);
 
 		format(string, sizeof(string), "You have unbanned %s from the server. Reason: %s", playername, reason);
 		SendClientMessage(playerid, COLOR_RED, string);
@@ -2234,6 +2631,8 @@ CMD:spawnv(playerid, params[]) // Spawns a vehicle and puts the player in it (au
 
 		vid = CreateVehicle(modelid, X, Y, Z, angle, color1, color2, -1);
 
+		Vehicle[vid][vFuel] = 100.0;
+
 		format(string, sizeof(string), "%s has been spawned.", GetVehicleName(vid));
 		SendClientMessage(playerid, COLOR_MEDIUMBLUE, string);
 
@@ -2481,7 +2880,7 @@ CMD:createdealership(playerid, params[]) // Creates a new dealership
 	return 1;
 }
 
-CMD:gotod(playerid, params[])
+CMD:gotods(playerid, params[])
 	return cmd_gotodealership(playerid, params);
 
 CMD:gotodealership(playerid, params[]) // Teleports the player to the specified dealership
@@ -2867,7 +3266,7 @@ CMD:givemoney(playerid, params[]) // Gives cash to a player
 			format(string, sizeof(string), "You have given $%d to %s.", amount, GetName(targetid));
 			SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
 
-			format(string, sizeof(string), "Admins %s has given you $%d.", GetName(playerid), amount);
+			format(string, sizeof(string), "Admin %s has given you $%d.", GetName(playerid), amount);
 			SendClientMessage(targetid, COLOR_LIGHTBLUE, string);
 
 			gettime(hour, minute, second);
@@ -3075,9 +3474,14 @@ CMD:engine(playerid, params[]) // Starts and stops the engine of a vehicle
 	}
 	else
 	{
-		engine = 1;
-		format(string, sizeof(string), "%s starts the engine of a %s.", GetName(playerid), GetVehicleName(vid));
-		RangeSend(30.0, playerid, string, COLOR_PINK);
+		if(Vehicle[vid][vFuel] > 0)
+		{
+			engine = 1;
+			format(string, sizeof(string), "%s starts the engine of a %s.", GetName(playerid), GetVehicleName(vid));
+			RangeSend(30.0, playerid, string, COLOR_PINK);
+		}
+		else
+			SendClientMessage(playerid, COLOR_LIGHTCYAN, "Your vehicle is out of fuel.");
 	}
 
 	SetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
@@ -3166,5 +3570,63 @@ CMD:lights(playerid, params[]) // Turns the lights of a vehicle on or off
 		lights = 1;
 
 	SetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
+	return 1;
+}
+
+CMD:stats(playerid, params[]) // Shows the stats of the player
+{
+	new string[256], sex[64], vipstring[128];
+
+	if(Player[playerid][pSex] == 0)
+		sex = "Male";
+	else
+		sex = "Female";
+
+	if(Player[playerid][pVipLevel] > 0)
+		format(vipstring, sizeof(vipstring), "Yes, Level %d", Player[playerid][pVipLevel]);
+	else
+		vipstring = "No";
+
+	format(string, sizeof(string), "*** %s (%d) ***", GetName(playerid), playerid);
+	SendClientMessage(playerid, COLOR_WHITE, string);
+
+	format(string, sizeof(string), "Level:[%d]  Sex:[%s]  Cash:[$%d]  Bank:[$%d]  Phone:[%d]  Hours Played:[%.1f]", GetPlayerScore(playerid), sex, Player[playerid][pCash], 0, 0, Player[playerid][pHoursPlayed]);
+	SendClientMessage(playerid, COLOR_WHITE, string);
+
+	format(string, sizeof(string), "Times Arrested:[%d]  Respect:[%d/%d]  Next Level:[$%d]  VIP:[%s]", 0, Player[playerid][pRespectPoints], (GetPlayerScore(playerid) * 4) - 2, GetPlayerScore(playerid) * 250, vipstring);
+	SendClientMessage(playerid, COLOR_WHITE, string);
+
+	format(string, sizeof(string), "Drugs:[%d] Materials:[%d] WantedLevel:[%d] Crimes:[%d] Deaths:[%d] Kills:[%d] Jailed:[%s]", 0, 0, 0, 0, 0, 0, 0, "No");
+	SendClientMessage(playerid, COLOR_WHITE, string);
+
+	format(string, sizeof(string), "Lotto Number:[%d] MarriedTo:[%s] Job:[%s] Faction:[%s] Rank:[%s] FactionWarns:[%d/5] FPunish[%d/60] ", 0, "None", "None", "None", "None", 0, 0);
+	SendClientMessage(playerid, COLOR_WHITE, string);
+	return 1;
+}
+
+CMD:buylevel(playerid, params[]) // Buys next level
+{
+	new string[512];
+	new totalneeded = (GetPlayerScore(playerid) * 4) - 2;
+	new nextlevel = GetPlayerScore(playerid) * 250;
+	if(Player[playerid][pRespectPoints] >= totalneeded)
+	{
+		if(Player[playerid][pCash] >= GetPlayerScore(playerid) * 250)
+		{
+			if(Player[playerid][pVipLevel] == 0)
+			{
+				if(Player[playerid][pRespectPoints] > totalneeded)
+				{
+					format(string, sizeof(string), "Warning: You are not a VIP. So %d respect points will be lost. Are you sure you want to buy next level?", -(totalneeded - Player[playerid][pRespectPoints]));
+					ShowPlayerDialog(playerid, DIALOG_BUY_LEVEL, DIALOG_STYLE_MSGBOX, "Buy Level", string, "Yes", "No");
+					return 1;
+				}
+			}
+			BuyLevel(playerid);
+		}
+		else
+			format(string, sizeof(string), "You need at least $%d to buy next level", nextlevel);	
+		SendClientMessage(playerid, COLOR_NEUTRAL, string);
+	}
 	return 1;
 }
