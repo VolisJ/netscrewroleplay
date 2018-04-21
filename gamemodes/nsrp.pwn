@@ -58,7 +58,7 @@ new Text3D:VehicleLabel[MAX_VEHICLES];
 
 new vehicles;
 
-new VehicleNames[][] = {
+new VehicleNames[] = {
 	"Landstalker","Bravura","Buffalo","Linerunner","Perennial","Sentinel","Dumper","Firetruck","Trashmaster","Stretch","Manana","Infernus",
 	"Voodoo","Pony","Mule","Cheetah","Ambulance","Leviathan","Moonbeam","Esperanto","Taxi","Washington","Bobcat","Mr Whoopee","BF Injection",
 	"Hunter","Premier","Enforcer","Securicar","Banshee","Predator","Bus","Rhino","Barracks","Hotknife","Trailer","Previon","Coach","Cabbie",
@@ -78,6 +78,7 @@ new VehicleNames[][] = {
 	"Stair Trailer","Boxville","Farm Plow","Utility Trailer"
 };
 
+//Trucker System Variables
 new Float:XcheckPositions[] = { 
 	2206.4895, 2030.8846, 1888.1641, 1779.8054, 1530.3160
 };
@@ -93,6 +94,12 @@ new Float:ZcheckPositions[] = {
 new bool:working[MAX_PLAYERS];
 new TrailerID[] = {435, 450, 591};
 new r_trailer, r_checkzone = 0, count_work[MAX_PLAYERS] = 0;
+
+//Mechanic System Variables
+new bool:MechanicServiceRequest[MAX_PLAYERS] = false;
+new bool:MechanicRequestGenerated[MAX_PLAYERS] = false;
+new RefillPrice[MAX_PLAYERS] = -1;
+new MechanicOnService[MAX_PLAYERS] = -1;
 
 // -------------------------------------------Enums-------------------------------------------
 enum PlayerData
@@ -113,7 +120,9 @@ enum PlayerData
 	pBanTime,
 	pBanExp,
 	pJobStatus,
-	pJobID
+	pJobID,
+	pTruckerSkill,
+	pMechanicSkill
 }
 new Player[MAX_PLAYERS][PlayerData];
 
@@ -131,7 +140,8 @@ enum VehicleData
 	vVirtualWorld,
 	vCarPlate,
 	vMods[14],
-	vPaintjob
+	vPaintjob,
+	Float:vFuel
 }
 new Vehicle[MAX_VEHICLES][VehicleData];
 
@@ -171,7 +181,7 @@ enum dialogs
 native WP_Hash(buffer[], len, const str[]);
 
 // ------------------------------------------Forwards-----------------------------------------
-forward LoadAccounts(playerid);
+forward LoadAccount(playerid);
 forward CheckAccountExist(playerid);
 forward OnAccountRegister(playerid);
 forward SaveAccount(playerid);
@@ -454,38 +464,41 @@ public OnPlayerEnterCheckpoint(playerid)
 {
 	if(working[playerid])
 	{
-		if(IsTrailerAttachedToVehicle(Truck[playerid][T_vehicle]))
+		if(Player[playerid][pJobID] == 0)
 		{
-			
-			new Float:j1, Float:j2, Float:j3, Float:rotation;
-			if(count_work[playerid] > 1)
+			if(IsTrailerAttachedToVehicle(Truck[playerid][T_vehicle]))
 			{
-				SafeGivePlayerMoney(playerid, 1000);
+				new Float:j1, Float:j2, Float:j3, Float:rotation;
+
+				if(count_work[playerid] > 1)
+				{
+					SafeGivePlayerMoney(playerid, 1000);
+				}
+				
+				count_work[playerid]++;
+				
+				r_trailer = random(3);
+				Truck[playerid][r_color1] = random(256);
+				Truck[playerid][r_color2] = random(256);
+				GetVehiclePos(Truck[playerid][Trailer], j1, j2, j3);
+				DestroyVehicle(Truck[playerid][Trailer]);
+				rotation = GetVehicleRotation(Truck[playerid][T_vehicle]);
+				DetachTrailerFromVehicle(Truck[playerid][T_vehicle]);
+
+				DisablePlayerCheckpoint(playerid);
+
+				Truck[playerid][Trailer] = CreateVehicle(TrailerID[r_trailer], j1, j2, j3, rotation - 20 , Truck[playerid][r_color1], Truck[playerid][r_color2], -1);
+				
+				AttachTrailerToVehicle(Truck[playerid][Trailer], Truck[playerid][T_vehicle]);
+
+				SetPlayerCheckpoint(playerid, XcheckPositions[r_checkzone], YcheckPositions[r_checkzone], ZcheckPositions[r_checkzone], 10.0);
+				r_checkzone++;
+			
 			}
-			
-			count_work[playerid]++;
-			
-			r_trailer = random(3);
-			Truck[playerid][r_color1] = random(256);
-			Truck[playerid][r_color2] = random(256);
-			GetVehiclePos(Truck[playerid][Trailer], j1, j2, j3);
-			DestroyVehicle(Truck[playerid][Trailer]);
-			rotation = GetVehicleRotation(Truck[playerid][T_vehicle]);
-			DetachTrailerFromVehicle(Truck[playerid][T_vehicle]);
-
-			DisablePlayerCheckpoint(playerid);
-
-			Truck[playerid][Trailer] = CreateVehicle(TrailerID[r_trailer], j1, j2, j3, rotation - 20 , Truck[playerid][r_color1], Truck[playerid][r_color2], -1);
-			
-			AttachTrailerToVehicle(Truck[playerid][Trailer], Truck[playerid][T_vehicle]);
-
-			SetPlayerCheckpoint(playerid, XcheckPositions[r_checkzone], YcheckPositions[r_checkzone], ZcheckPositions[r_checkzone], 10.0);
-			r_checkzone++;
-		
-		}
-		else
-		{
-			SendClientMessage(playerid, COLOR_YELLOW, "Where's your Trailer dude?");
+			else
+			{
+				SendClientMessage(playerid, COLOR_YELLOW, "Where's your Trailer dude?");
+			}
 		}
 	}
 	return 1;
@@ -677,6 +690,18 @@ public SaveAccount(playerid) // Saves the information to the .ini file
 	format(line, sizeof(line), "BanExp=%d\r\n", Player[playerid][pBanExp]);
 	fwrite(handle, line);
 
+	format(line, sizeof(line), "JobStatus=%d\r\n", Player[playerid][pJobStatus]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "JobID=%d\r\n", Player[playerid][pJobID]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "TruckerSkill=%d\r\n", Player[playerid][pTruckerSkill]);
+	fwrite(handle, line);
+
+	format(line, sizeof(line), "MechanicSkill=%d\r\n", Player[playerid][pMechanicSkill]);
+	fwrite(handle, line);
+
 	fclose(handle);
 	return 1;
 }
@@ -731,6 +756,14 @@ public OnAccountLoad(playerid) // Loads player data from the .ini file to the pl
 			Player[playerid][pBanTime] = strval(line[s]);
 		else if(strcmp(key, "BanExp") == 0)
 			Player[playerid][pBanExp] = strval(line[s]);
+		else if(strcmp(key, "JobStatus") == 0)
+			Player[playerid][pJobStatus] = strval(line[s]);
+		else if(strcmp(key, "JobID") == 0)
+			Player[playerid][pJobID] = strval(line[s]);
+		else if(strcmp(key, "TruckerSkill") == 0)
+			Player[playerid][pTruckerSkill] = strval(line[s]);
+		else if(strcmp(key, "MechanicSkill") == 0)
+			Player[playerid][pMechanicSkill] = strval(line[s]);
 	}
 	fclose(handle);
 
@@ -1115,7 +1148,7 @@ public LoadVehicles() // Loads vehicle data from .ini file
 	vehicles = count;
 }
 
-stock GetVehicleRotation(vehicleid)
+stock GetVehicleRotation(vehicleid) // Returns the rotation of a vehicle
 {
 	new Float:qw,Float:qx,Float:qy,Float:qz, Float:rx, Float:ry, Float:rz, Float:rot;
 
@@ -1322,7 +1355,7 @@ public PMLog(playerid, pmlogstring[]) // Makes log of PMs sent by admins to play
 
 // -------------------------------------Job Functions---------------------------------------------
 
-stock UpdateJob(jobid, removeold) 
+stock UpdateJob(jobid, removeold) // Updates job data and labels
 {
 	new string2[1024];
 	if(Job[jobid][JobStatus])
@@ -1340,7 +1373,7 @@ stock UpdateJob(jobid, removeold)
 	}
 }
 
-stock SaveJob(jobid)
+stock SaveJob(jobid) // Saves job data into .ini file
 {
 	new filename[64], line[256];
 
@@ -1372,7 +1405,7 @@ stock SaveJob(jobid)
 	fclose(handle);
 }
 
-stock LoadJob()
+stock LoadJob() // Loads Job data from .ini file
 {
 	new File:handle, count;
 	new filename[64], line[256], s, key[64];
@@ -1416,7 +1449,7 @@ stock LoadJob()
 	printf("  Loaded %d Jobs", count);
 }
 
-stock GotoWork(playerid, id)
+stock GotoWork(playerid, id) // Gives player work according to their job ID's
 {
 	if(id == 0)
 	{
@@ -1427,13 +1460,12 @@ stock GotoWork(playerid, id)
 
 		Truck[playerid][T_vehicle] = CreateVehicle(Trucks[random(3)], 2192.4851, -2264.9810, 13.5469, 319.9930, Truck[playerid][r_color1], Truck[playerid][r_color2], -1);
 		Truck[playerid][Trailer] = CreateVehicle( 450, 2181.2285, -2280.8203, 13.5469, 318.6438, Truck[playerid][r_color2], 5, -1);
-
 		PutPlayerInVehicle(playerid, Truck[playerid][T_vehicle], 0);
 		AttachTrailerToVehicle(Truck[playerid][Trailer], Truck[playerid][T_vehicle]);
 
 		SetPlayerCheckpoint(playerid, XcheckPositions[r_checkzone], YcheckPositions[r_checkzone], ZcheckPositions[r_checkzone], 15.0);
-		SendClientMessage(playerid, COLOR_BRIGHTRED, "Move to new red markers shown on the map. To quit your work anytime just leave the vehice.");
 		r_checkzone++;
+		return SendClientMessage(playerid, COLOR_BRIGHTRED, "Move to new red markers shown on the map. To quit your work anytime just leave the vehice.");
 	}
 	return 1;
 }
@@ -2063,8 +2095,8 @@ CMD:banacip(playerid, params[]) // Bans an account and IP address both(-1 for pe
 			BanLog(targetid, banstring);
 
 			format(string, sizeof(string), "banip %s", pIp); 
-        	SendRconCommand(string); 
-        	SendRconCommand("reloadbans"); 
+			SendRconCommand(string); 
+			SendRconCommand("reloadbans"); 
 		}
 		else
 			return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "The player is not connected!");
@@ -3087,6 +3119,13 @@ CMD:fly(playerid, params[]) // Makes the player jump in both upward and forward 
 	return 1;
 }
 
+CMD:respawn(playerid)
+{
+	if(Player[playerid][pAdminLevel] == 6 || IsPlayerAdmin(playerid))
+		SpawnPlayer(playerid);
+	return 1;
+}
+
 // ------------------------------------------------------------------------------------------------
 CMD:givemoney(playerid, params[]) // Gives cash to a player
 {
@@ -3228,7 +3267,7 @@ CMD:createjob(playerid, params[])
 	if(Player[playerid][pAdminLevel] == 6 || IsPlayerAdmin(playerid))
 	{
 		if(sscanf(params, "s[128]i", jobname, joblevel))
-			return SendClientMessage(playerid, 0xE74C3CFF, "Syntax:/createjob [jobname] [joblevel]");
+			return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax:/createjob [jobname] [joblevel]");
 
 		for(new i = 0; i < MAX_JOB_LIMIT; i++)
 		{
@@ -3451,6 +3490,7 @@ CMD:lights(playerid, params[]) // Turns the lights of a vehicle on or off
 	return 1;
 }
 
+// ------------------------------------------------------------------------------------------------
 CMD:getjob(playerid)
 {
 
@@ -3524,9 +3564,289 @@ CMD:resign(playerid)
 	return SendClientMessage(playerid, COLOR_RED, "You are not in range of any job.");
 }
 
-CMD:respawn(playerid)
+// ------------------------------------------------------------------------------------------------
+
+CMD:service(playerid, params[])
 {
-	if(Player[playerid][pAdminLevel] == 6 || IsPlayerAdmin(playerid))
-		SpawnPlayer(playerid);
+	new ser[128];
+
+	if(sscanf(params, "s[128]", ser))
+		return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax:/service [taxi/medical/mechanic]");
+
+	if(strcmp(ser, "mechanic") == 0)
+	{
+		new flag = 0;
+		for(new i = 0; i < MAX_PLAYERS; i++)
+		{
+			if(IsPlayerConnected(i) && Player[i][pJobID] == 1)
+			{
+				new string[128];
+				format(string, sizeof(string), "%s requested for a mechanic. To accept the job, type: /accept", GetName(playerid));
+				SendClientMessage( i, COLOR_NEUTRALGREEN, string);
+				MechanicServiceRequest[playerid] = true;
+				flag = 1;
+			}
+		}
+		if(flag == 0)
+			return SendClientMessage(playerid, COLOR_WHITE, "No Mechanic online.");
+	}
+	else		
+		return SendClientMessage(playerid, COLOR_WHITE, "Please choose between the given options. [taxi/medical/mechanic]");
+	return 1;
+}
+
+CMD:accept(playerid)
+{
+	if(Player[playerid][pJobID] == 1)
+	{
+		for(new i = 0; i < MAX_PLAYERS; i++)
+		{
+			if(MechanicServiceRequest[i] == true)
+			{
+				new Float:x, Float:y, Float:z;
+				GetPlayerPos(i, x, y, z);
+				SetPlayerMapIcon(playerid, playerid, x, y, z, 0, 3, MAPICON_GLOBAL_CHECKPOINT);
+				MechanicServiceRequest[i] = false;
+				MechanicRequestGenerated[playerid] = true;
+				MechanicOnService[i] = playerid;
+				return SendClientMessage(playerid, COLOR_LIGHTNEUTRALBLUE, "Goto red marker shown on Map.");
+			}
+		}
+		return SendClientMessage(playerid, COLOR_LIGHTBLUE, "No job available or already taken");
+	}
+	return 1;
+}
+
+CMD:refill(playerid, params[])
+{
+	new targetid, price;
+	if(sscanf(params, "ui", targetid, price))
+		return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax:/refill [targetid] [price offer to refill the fuel]");
+	if(price < 0)
+		return SendClientMessage(playerid, COLOR_RED, "Price cannot be negative");
+
+	if(Player[playerid][pJobID] == 1 || Player[playerid][pAdminLevel] >= 4)
+	{
+		if(GetPlayerState(targetid) == PLAYER_STATE_DRIVER)
+		{
+			new vid, engine, lights, alarm, doors, bonnet, boot, objective, Float:x, Float:y, Float:z;
+			vid = GetPlayerVehicleID(targetid);
+			GetVehiclePos(vid, x, y, z);
+			GetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
+			if(playerid == targetid)
+			{
+				if(Player[playerid][pMechanicSkill] > 3)
+				{
+					Vehicle[vid][vFuel] = 100.0;
+				}
+				else
+					return SendClientMessage(playerid, COLOR_RED, "You need to be a mechanic of level 4 or more to use this command on yourself.");
+			}
+			else
+			{
+				if(IsPlayerInRangeOfPoint(playerid, 4.0, x, y, z))
+				{
+					if(engine == 0)
+					{
+						new string[512];
+						format(string, sizeof(string), "Mechanic %s of skill level %d offered you refill for price %d.\nTo accept the offer type:/acceptrefill or to bargain just chat with the mechanic.", GetName(playerid), Player[playerid][pMechanicSkill], price);
+						MechanicOnService[targetid] = playerid;
+						MechanicRequestGenerated[playerid] = true;
+						RefillPrice[targetid] = price;
+						return SendClientMessage(targetid, COLOR_SEAGREEN, string);
+					}
+					else
+					{
+						SendClientMessage(playerid, COLOR_WHITE, "Car engine must be turned off to give a refill.");
+						return SendClientMessage(targetid, COLOR_RED, "Plaese turn off your car's engine to have a refill.");
+					}
+				}
+				else
+					return SendClientMessage(playerid, COLOR_ORANGE, "You need to be closer to the vehicle to refill it.");
+			}		
+		}
+		else
+		{
+			SendClientMessage(playerid, COLOR_WHITE, "Your customer is not in driver seat.");
+			return SendClientMessage(targetid, COLOR_WHITE, "You need to be in driver seat to have a refill of your car.");
+		}
+	}
+	else
+		return SendClientMessage(playerid, COLOR_RED, "You need to be a mechanic to use this command.");
+	return 1;
+}
+
+CMD:repair(playerid, params[])
+{
+	new vid, engine, lights, alarm, doors, bonnet, boot, objective;
+
+	if(Player[playerid][pJobID] == 1)
+	{
+		if(GetPlayerState(playerid) == PLAYER_STATE_DRIVER && Player[playerid][pMechanicSkill] > 3)
+		{
+			vid = GetPlayerVehicleID(playerid);
+			GetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
+			RepairVehicle(vid);
+			SendClientMessage(playerid, COLOR_GREEN, "Vehicle repaired");
+		}
+		else if(MechanicRequestGenerated[playerid] == true)
+		{
+			new targetid, price, Float:x, Float:y, Float:z;
+
+			if(sscanf(params, "ui", targetid, price))
+				return SendClientMessage(playerid, COLOR_LIGHTCYAN, "Syntax:/repair [targetid] [price offer to repair the car]");
+			if(price < 0)
+				return SendClientMessage(playerid, COLOR_RED, "Price cannot be negative");
+
+			vid = GetPlayerVehicleID(targetid);
+			GetVehiclePos(vid, x, y, z);
+			GetVehicleParamsEx(vid, engine, lights, alarm, doors, bonnet, boot, objective);
+			
+			if(GetPlayerState(targetid) == PLAYER_STATE_DRIVER)
+			{
+				if(IsPlayerInRangeOfPoint(playerid, 4.0, x, y, z))
+				{
+					if(engine == 0)
+					{
+						new string[512];
+						format(string, sizeof(string), "Mechanic %s of skill level %d offered you repair for price %d.\nTo accept the offer type:/acceptrepair or to bargain just chat with the mechanic.", GetName(playerid), Player[playerid][pMechanicSkill], price);
+						MechanicOnService[targetid] = playerid;
+						
+						RefillPrice[targetid] = price;
+						return SendClientMessage(targetid, COLOR_SEAGREEN, string);
+					}
+					else
+					{
+						SendClientMessage(playerid, COLOR_WHITE, "Car engine must be turned off to give a repair.");
+						return SendClientMessage(targetid, COLOR_RED, "Plaese turn off your car's engine to have a repair.");
+					}
+				}
+				else
+					return SendClientMessage(playerid, COLOR_ORANGE, "You need to be closer to the vehicle to repair it.");
+			}
+			else
+			{
+				SendClientMessage(playerid, COLOR_WHITE, "Your customer is not in driver seat.");
+				return SendClientMessage(targetid, COLOR_WHITE, "You need to be in driver seat to have a repair for your car.");
+			}
+
+		}
+		else
+			return SendClientMessage(playerid, COLOR_RED, "Currently there is no request for mechanic.");
+	}
+	else
+		return SendClientMessage(playerid, COLOR_RED, "You need to be a mechanic to use this command.");
+	return 1;
+}
+
+CMD:acceptrefill(playerid)
+{
+	if(MechanicRequestGenerated[playerid] == true)
+	{
+		new targetid, string[128];
+		targetid = MechanicOnService[playerid];
+		new vid = GetPlayerVehicleID(playerid);
+		new Float:remainingFuel = 100 - Vehicle[vid][vFuel];
+		if(Player[targetid][pMechanicSkill] < 2)
+		{
+			if(remainingFuel > 20.0)
+			{
+				Vehicle[vid][vFuel] += 20.0;
+				format(string, sizeof(string), "Vehicle fuel refilled upto 20%%");
+				SendClientMessage(playerid, COLOR_GREEN, string);
+			}
+			else
+			{
+				Vehicle[vid][vFuel] += remainingFuel;
+				SendClientMessage(playerid, COLOR_GREEN, "Fuel refilled");
+			}
+		}
+		else if(Player[targetid][pMechanicSkill] == 2)
+		{
+			if(remainingFuel > 40.0)
+			{
+				Vehicle[vid][vFuel] += 40.0;
+				format(string, sizeof(string), "Vehicle fuel refilled upto 40%%");
+				SendClientMessage(playerid, COLOR_GREEN, string);
+			}
+			else
+			{
+				Vehicle[vid][vFuel] += remainingFuel;
+				SendClientMessage(playerid, COLOR_GREEN, "Fuel refilled");
+			}
+		}
+		else if(Player[targetid][pMechanicSkill] == 3)
+		{
+			if(remainingFuel > 60.0)
+			{
+				Vehicle[vid][vFuel] += 60.0;
+				format(string, sizeof(string), "Vehicle fuel refilled upto 60%%");
+				SendClientMessage(playerid, COLOR_GREEN, string);
+			}
+			else
+			{
+				Vehicle[vid][vFuel] += remainingFuel;
+				SendClientMessage(playerid, COLOR_GREEN, "Fuel refilled");
+			}
+		}
+		else if(Player[targetid][pMechanicSkill] == 4)
+		{
+			if(remainingFuel > 80.0)
+			{
+				Vehicle[vid][vFuel] += 80.0;
+				format(string, sizeof(string), "Vehicle fuel refilled upto 80%%");
+				SendClientMessage(playerid, COLOR_GREEN, string);
+			}
+			else
+			{
+				Vehicle[vid][vFuel] += remainingFuel;
+				SendClientMessage(playerid, COLOR_GREEN, "Fuel refilled");
+			}
+		}
+		else
+		{
+			if(remainingFuel == 100.0)
+			{
+				Vehicle[vid][vFuel] += 100.0;
+				format(string, sizeof(string), "Vehicle fuel refilled upto 100%%");
+				SendClientMessage(playerid, COLOR_GREEN, string);
+			}
+			else
+			{
+				Vehicle[vid][vFuel] += remainingFuel;
+				SendClientMessage(playerid, COLOR_GREEN, "Fuel refilled");
+			}
+		}
+		RemovePlayerMapIcon(targetid, playerid);
+		MechanicOnService[playerid] = -1;
+		MechanicRequestGenerated[targetid] = false;
+	}
+	else if(MechanicOnService[playerid] == -1)
+	{
+		return SendClientMessage(playerid, COLOR_RED, "No mechanic has accepted your request yet.");
+	}
+	else
+		return SendClientMessage(playerid, COLOR_RED, "You need to request a mechanic first. To request for a mechanic. Type:/service mechanic");
+	return 1;
+}
+
+CMD:acceptrepair(playerid)
+{
+	if(MechanicRequestGenerated[playerid] == true)
+	{
+		new targetid = MechanicOnService[playerid];
+		new vid = GetPlayerVehicleID(playerid);
+		RepairVehicle(vid);
+		SendClientMessage(playerid, COLOR_GREEN, "Vehicle repaired");
+		RemovePlayerMapIcon(targetid, playerid);
+		MechanicOnService[playerid] = -1;
+		MechanicRequestGenerated[targetid] = false;
+	}
+	else if(MechanicOnService[playerid] == -1)
+	{
+		return SendClientMessage(playerid, COLOR_RED, "No mechanic has accepted your request yet.");
+	}
+	else
+		return SendClientMessage(playerid, COLOR_RED, "You need to request a mechanic first. To request for a mechanic. Type:/service mechanic");
 	return 1;
 }
