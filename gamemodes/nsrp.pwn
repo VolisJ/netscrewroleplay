@@ -536,12 +536,6 @@ public OnPlayerStateChange(playerid, newstate, oldstate)
 public OnPlayerEnterVehicle(playerid, vehicleid, ispassenger)
 {
 	KillTimer(fueltimer[playerid]);
-	
-	if(Player[playerid][pJobID] == 2 && GetPlayerVehicleID(playerid) == 531)
-	{
-		FarmerWork(playerid);
-	}
-
 	return 1;
 }
 
