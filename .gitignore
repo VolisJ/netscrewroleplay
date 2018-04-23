@@ -56,3 +56,4 @@ server_log.txt
 *.log
 crashinfo.txt
 scriptfiles/
+*.inc
